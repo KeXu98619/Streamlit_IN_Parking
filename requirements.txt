@@ -1,7 +1,0 @@
-streamlit
-pandas
-geopandas
-shapely
-folium
-streamlit-folium
-altair

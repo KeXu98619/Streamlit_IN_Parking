@@ -9,6 +9,26 @@ import altair as alt
 import re
 import textwrap
 
+# --- put this at the very top of app.py ---
+# to add a password requirement
+def require_password():
+    def _check():
+        if st.session_state.get("pw_input", "") == st.secrets["APP_PASSWORD"]:
+            st.session_state["authed"] = True
+            st.session_state.pop("pw_input", None)
+        else:
+            st.session_state["authed"] = False
+
+    if "authed" not in st.session_state or not st.session_state["authed"]:
+        st.text_input("Password", type="password", key="pw_input", on_change=_check)
+        if "authed" in st.session_state and st.session_state["authed"] is False:
+            st.error("Incorrect password.")
+        st.stop()
+
+require_password()
+# ...the rest of your app below...
+
+
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
@@ -358,3 +378,4 @@ with st.expander("Metrics & diagnosis"):
 - **Enough for designated; overflow in undesignated (total > supply)**  
 - **Enough for demand; consistent undesignated observed (total ≤ supply)**  
 """)
+

@@ -7,7 +7,6 @@ from streamlit_folium import st_folium
 import folium
 import altair as alt
 import re
-import textwrap
 
 # --- put this at the very top of app.py ---
 # to add a password requirement
@@ -28,15 +27,15 @@ def require_password():
 require_password()
 # ...the rest of your app below...
 
-
-
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
 # DATA_DIR = Path("data")
 DAILY_CSV = Path("indiana_county_daily.csv")
 COUNTIES_GEOJSON = Path("indiana_counties_500k.geojson")
-RAW_HOURLY_CSV = Path("dummydata.xlsx")              # used for stacked bars & hourly download
-SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")    # backend truck parking spots
+#updated to the latest data 
+RAW_HOURLY_CSV = Path("in_parking_demand_data_ver0.parquet")# used for stacked bars & hourly download
+SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")            # backend truck parking spots
+ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")   # roadway lines (no tooltip)
 
 # ---------- cached loaders ----------
 @st.cache_data(show_spinner=False)
@@ -51,7 +50,10 @@ def load_counties():
 
 @st.cache_data(show_spinner=False)
 def load_hourly():
-    df = pd.read_excel(RAW_HOURLY_CSV)
+    df = pd.read_parquet(RAW_HOURLY_CSV)
+    #some quick processing for the new data format
+    df = df.drop(columns = {"county_name"})
+    df.columns = ["county","hour","des_demand", "undes_demand", "supply"]
     df.columns = [c.strip().lower() for c in df.columns]
     df["county"] = df["county"].astype(str).str.zfill(5)
     df["hour"] = df["hour"].astype(int)
@@ -71,6 +73,18 @@ def load_spots(path: Path):
     except Exception as e:
         return None, f"Could not read truck spots ({path.name}): {e}"
 
+@st.cache_data(show_spinner=False)
+def load_roadways(path: Path):
+    if not path.exists():
+        return None, f"Roadways file not found: {path}"
+    try:
+        gdf = gpd.read_file(path).to_crs(epsg=4326)
+        # keep only line-ish geometries
+        gdf = gdf[gdf.geometry.notna() & gdf.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+        return gdf, None
+    except Exception as e:
+        return None, f"Could not read roadways ({path.name}): {e}"
+
 # ---------- map builders ----------
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     m = folium.Map(location=[39.9, -86.3], zoom_start=7, tiles="cartodbpositron")
@@ -86,14 +100,6 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
         legend_name=legend_label,
     ).add_to(m)
     return m
-
-def wrap_html_breaks(text: str, width: int = 34):
-    if not isinstance(text, str) or not text:
-        return ""
-    # wrap at word boundaries; join with <br> so it breaks even when nowrap is on
-    lines = textwrap.wrap(text, width=width, break_long_words=False, break_on_hyphens=True)
-    return "<br>".join(lines)
-
 
 def make_categorical_map(gdf_joined, category_col, palette=None):
     if palette is None:
@@ -112,8 +118,7 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
 
     gj = folium.GeoJson(gdf_joined, style_function=style_fn, name="Diagnosis")
     gj.add_to(m)
-
-    # categorical legend
+    # build a simple categorical legend
     legend_html = """
     <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc;">
       <b>Diagnosis</b><br>
@@ -125,25 +130,25 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     return m
 
 def attach_tooltip_and_popup(m, gdf_joined):
-    # 12 attributes in tooltip (11 metrics + diagnosis-wrapped)
+    # Use *natural* wrapping (no manual <br>, no forced nowrap)
+    # We also use *_fmt columns where we rounded values for display.
     fields = [
         ("County", "county_name"),
         ("FIPS", "county_fips"),
-        ("Max hourly des. demand", "max_hourly_des_demand"),
-        ("Max hourly undes. demand", "max_hourly_undes_demand"),
-        ("Max hourly total demand", "max_hourly_total_demand"),
-        ("Acc. des. demand (truck-hrs)", "acc_des_demand"),
-        ("Acc. undes. demand (truck-hrs)", "acc_undes_demand"),
-        ("Acc. total demand (truck-hrs)", "acc_total_demand"),
-        ("Supply (hourly fixed)", "supply"),
-        ("Max hourly des. deficit", "max_hourly_des_deficit"),
-        ("Max hourly total deficit", "max_hourly_total_deficit"),
-        ("Acc. des. deficit (truck-hrs)", "acc_des_deficit"),
-        ("Acc. total deficit (truck-hrs)", "acc_total_deficit"),
-        ("Diagnosis", "diagnosis_wrapped"),  # <-- wrapped with <br>
+        ("Max hourly des. demand", "max_hourly_des_demand_fmt"),
+        ("Max hourly undes. demand", "max_hourly_undes_demand_fmt"),
+        ("Max hourly total demand", "max_hourly_total_demand_fmt"),
+        ("Acc. des. demand (truck-hrs)", "acc_des_demand_fmt"),
+        ("Acc. undes. demand (truck-hrs)", "acc_undes_demand_fmt"),
+        ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
+        ("Supply (hourly fixed)", "supply_fmt"),
+        ("Max hourly des. deficit", "max_hourly_des_deficit_fmt"),
+        ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
+        ("Acc. des. deficit (truck-hrs)", "acc_des_deficit_fmt"),
+        ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
+        ("Diagnosis", "diagnosis"),
     ]
 
-    # Keep labels & values on a single line; <br> in diagnosis will still break.
     tooltip_style = (
         "background-color: white; "
         "color: #333; "
@@ -151,9 +156,9 @@ def attach_tooltip_and_popup(m, gdf_joined):
         "border: 1px solid #AAA; "
         "border-radius: 3px; "
         "padding: 6px; "
-        "white-space: nowrap; "     # <-- prevents wrapping for everything
-        "max-width: 320px; "
-        "width: 320px;"
+        "white-space: normal; "      # <-- let browser wrap naturally
+        "word-break: break-word; "   # <-- break long tokens if needed
+        "max-width: 360px; "
     )
 
     tooltip = folium.features.GeoJsonTooltip(
@@ -162,7 +167,7 @@ def attach_tooltip_and_popup(m, gdf_joined):
         sticky=True,
         localize=True,
         labels=True,
-        style=tooltip_style,  # inline CSS string (works across folium versions)
+        style=tooltip_style,
     )
 
     gj = folium.GeoJson(
@@ -175,7 +180,18 @@ def attach_tooltip_and_popup(m, gdf_joined):
     folium.GeoJsonPopup(fields=["county_fips"]).add_to(gj)
     gj.add_to(m)
 
-
+def add_roadways_layer(m, road_gdf):
+    """Add roadways (lines) as a toggleable layer (ON by default), no tooltip."""
+    if road_gdf is None or road_gdf.empty:
+        return
+    fg = folium.FeatureGroup(name="Roadways", show=True)
+    # simple styling; you can extend with color by 'highway' type if desired
+    folium.GeoJson(
+        road_gdf,
+        name="Roadways",
+        style_function=lambda _: {"color": "#4d4d4d", "weight": 1.0, "opacity": 0.8},
+    ).add_to(fg)
+    fg.add_to(m)
 
 def add_truck_spots_layer(m, spots_gdf):
     """Add spots as a toggleable layer (ON by default), no tooltip/popup."""
@@ -226,18 +242,41 @@ daily = load_daily()
 counties = load_counties()
 hourly = load_hourly()
 spots_gdf, spots_err = load_spots(SPOTS_GEOJSON)
+road_gdf, road_err = load_roadways(ROADWAYS_GEOJSON)
 
 # join & fill
 gdf_joined = counties.merge(daily, on="county_fips", how="left")
-gdf_joined["diagnosis_wrapped"] = gdf_joined["diagnosis"].apply(lambda s: wrap_html_breaks(s, width=34))
 num_cols = [c for c in daily.columns if c not in ("diagnosis", "county_fips")]
 for c in num_cols:
     if c in gdf_joined:
-        gdf_joined[c] = gdf_joined[c].fillna(0)
+        gdf_joined[c] = pd.to_numeric(gdf_joined[c], errors="coerce").fillna(0)
 
-# optional notice if spots missing
+# --- Create *_fmt (integer) columns for tooltip display only ---
+fmt_targets = [
+    "max_hourly_des_demand",
+    "max_hourly_undes_demand",
+    "max_hourly_total_demand",
+    "acc_des_demand",
+    "acc_undes_demand",
+    "acc_total_demand",
+    "supply",
+    "max_hourly_des_deficit",
+    "max_hourly_total_deficit",
+    "acc_des_deficit",
+    "acc_total_deficit",
+]
+for col in fmt_targets:
+    fmt_col = f"{col}_fmt"
+    if col in gdf_joined.columns:
+        gdf_joined[fmt_col] = gdf_joined[col].round(0).astype(int)
+    else:
+        gdf_joined[fmt_col] = 0
+
+# optional notices if overlays missing
 if spots_err:
     st.info(spots_err)
+if road_err:
+    st.info(road_err)
 
 # session state: selected county + ignore-next-click guard
 if "selected_fips" not in st.session_state:
@@ -258,9 +297,12 @@ with col_map:
             legend_label=map_metric_label
         )
 
+    # tooltip + popup on top of counties
     attach_tooltip_and_popup(m, gdf_joined)
-    # backend truck-spots overlay ON by default, user can toggle off
-    add_truck_spots_layer(m, spots_gdf)
+
+    # --- Layer order: heatmap/categorical -> Roadways -> Spots ---
+    add_roadways_layer(m, road_gdf)     # middle
+    add_truck_spots_layer(m, spots_gdf) # top
 
     folium.LayerControl(collapsed=False).add_to(m)
     map_state = st_folium(
@@ -313,7 +355,7 @@ with col_chart:
     title, bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
     st.write(f"**{title}**")
 
-    # enforce stack order
+    # enforce stack order + integer formatting for visuals
     bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
 
     stacked = (
@@ -321,7 +363,7 @@ with col_chart:
           .mark_bar()
           .encode(
               x=alt.X("hour:O", title="Hour of day"),
-              y=alt.Y("sum(value):Q", title="Demand (truck-hours)"),
+              y=alt.Y("sum(value):Q", title="Demand (truck-hours)", axis=alt.Axis(format=",.0f")),
               color=alt.Color(
                   "type:N",
                   title="",
@@ -347,6 +389,7 @@ with col_chart:
             st.rerun()
     with c2:
         # Download HOURLY (scoped to selection; default statewide)
+        # (Keep raw numeric precision in the CSV download)
         csv_bytes = hourly_table.to_csv(index=False).encode("utf-8")
         label = "Download hourly demand (statewide)" if st.session_state.selected_fips is None \
                 else f"Download hourly demand ({title})"
@@ -378,4 +421,3 @@ with st.expander("Metrics & diagnosis"):
 - **Enough for designated; overflow in undesignated (total > supply)**  
 - **Enough for demand; consistent undesignated observed (total ≤ supply)**  
 """)
-

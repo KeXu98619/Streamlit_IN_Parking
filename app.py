@@ -130,8 +130,7 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     return m
 
 def attach_tooltip_and_popup(m, gdf_joined):
-    # Use *natural* wrapping (no manual <br>, no forced nowrap)
-    # We also use *_fmt columns where we rounded values for display.
+    # Display-only integer columns already prepared as *_fmt
     fields = [
         ("County", "county_name"),
         ("FIPS", "county_fips"),
@@ -149,6 +148,7 @@ def attach_tooltip_and_popup(m, gdf_joined):
         ("Diagnosis", "diagnosis"),
     ]
 
+    # Force horizontal writing mode and natural wrapping
     tooltip_style = (
         "background-color: white; "
         "color: #333; "
@@ -156,9 +156,13 @@ def attach_tooltip_and_popup(m, gdf_joined):
         "border: 1px solid #AAA; "
         "border-radius: 3px; "
         "padding: 6px; "
-        "white-space: normal; "      # <-- let browser wrap naturally
-        "word-break: break-word; "   # <-- break long tokens if needed
-        "max-width: 360px; "
+        "writing-mode: horizontal-tb; "  # <-- stops vertical stacking
+        "text-orientation: mixed; "
+        "white-space: normal; "
+        "word-wrap: break-word; "
+        "overflow-wrap: anywhere; "
+        "max-width: 420px; "             # plenty of room
+        "line-height: 1.2;"
     )
 
     tooltip = folium.features.GeoJsonTooltip(
@@ -179,6 +183,7 @@ def attach_tooltip_and_popup(m, gdf_joined):
     )
     folium.GeoJsonPopup(fields=["county_fips"]).add_to(gj)
     gj.add_to(m)
+
 
 def add_roadways_layer(m, road_gdf):
     """Add roadways (lines) as a toggleable layer (ON by default), no tooltip."""
@@ -421,3 +426,4 @@ with st.expander("Metrics & diagnosis"):
 - **Enough for designated; overflow in undesignated (total > supply)**  
 - **Enough for demand; consistent undesignated observed (total ≤ supply)**  
 """)
+

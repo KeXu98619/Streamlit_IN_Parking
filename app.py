@@ -148,30 +148,13 @@ def attach_tooltip_and_popup(m, gdf_joined):
         ("Diagnosis", "diagnosis"),
     ]
 
-    # Force horizontal writing mode and natural wrapping
-    tooltip_style = (
-        "background-color: white; "
-        "color: #333; "
-        "font-size: 12px; "
-        "border: 1px solid #AAA; "
-        "border-radius: 3px; "
-        "padding: 6px; "
-        "writing-mode: horizontal-tb; "  # <-- stops vertical stacking
-        "text-orientation: mixed; "
-        "white-space: normal; "
-        "word-wrap: break-word; "
-        "overflow-wrap: anywhere; "
-        "max-width: 420px; "             # plenty of room
-        "line-height: 1.2;"
-    )
-
     tooltip = folium.features.GeoJsonTooltip(
         fields=[f for _, f in fields],
         aliases=[a for a, _ in fields],
         sticky=True,
         localize=True,
-        labels=True,
-        style=tooltip_style,
+        labels=True,    # keep the "Label: value" format
+        # no style override — use Leaflet defaults
     )
 
     gj = folium.GeoJson(
@@ -183,6 +166,7 @@ def attach_tooltip_and_popup(m, gdf_joined):
     )
     folium.GeoJsonPopup(fields=["county_fips"]).add_to(gj)
     gj.add_to(m)
+
 
 
 def add_roadways_layer(m, road_gdf):
@@ -426,4 +410,5 @@ with st.expander("Metrics & diagnosis"):
 - **Enough for designated; overflow in undesignated (total > supply)**  
 - **Enough for demand; consistent undesignated observed (total ≤ supply)**  
 """)
+
 

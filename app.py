@@ -8,9 +8,9 @@ from streamlit_folium import st_folium
 import folium
 import altair as alt
 import re
+import branca.colormap as cm
 
-# --- put this at the very top of app.py ---
-# to add a password requirement
+# --- password gate (keep at the very top) ---
 def require_password():
     def _check():
         if st.session_state.get("pw_input", "") == st.secrets["APP_PASSWORD"]:
@@ -26,46 +26,48 @@ def require_password():
         st.stop()
 
 require_password()
-# ...the rest of your app below...
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# ---- fonts (Streamlit-side) ----
+# ---- fonts (Streamlit-side; load Inter + apply broadly) ----
 st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
 <style>
-/* Streamlit UI font */
-html, body, [class*="css"] {
-  font-family: Inter, Arial, sans-serif !important;
-}
-/* Table font a bit tighter */
-.dataframe td, .dataframe th {
-  font-size: 12px;
-}
+  :root, html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stButton, .stCaption, .stDownloadButton, .stMetric {
+    font-family: Inter, Arial, sans-serif !important;
+  }
+  /* Tighter table text */
+  .stDataFrame table, .dataframe td, .dataframe th {
+    font-size: 12px !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
-# DATA_DIR = Path("data")
-# ---- logo path (update to your file) ----
-LOGO_PATH = Path("logo.png")  # replace with your PNG path
+# ---- logo path (try webp then png) ----
+LOGO_PATH = None
+for candidate in [Path("logo.webp"), Path("logo.png")]:
+    if candidate.exists():
+        LOGO_PATH = candidate
+        break
 
+# ---- data paths ----
 DAILY_CSV = Path("indiana_county_daily_ver2.csv")
 COUNTIES_GEOJSON = Path("indiana_counties_500k.geojson")
-#updated to the latest data 
-## V2
-RAW_HOURLY_CSV = Path("in_parking_demand_data_ver2.xlsx")# used for stacked bars & hourly download
-SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")            # backend truck parking spots
-ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")   # roadway lines (no tooltip)
+# V2 hourly input
+RAW_HOURLY_CSV = Path("in_parking_demand_data_ver2.xlsx")  # used for stacked bars & hourly download
+SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")              # backend truck parking spots
+ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")     # roadway lines (no tooltip)
 
 # ---- choropleth palettes (5 and 4 stops) ----
 PALETTE_5 = ["#e8edb8", "#bbe2c4", "#9bd4d0", "#7cc0db", "#61a1ca"]
 PALETTE_4 = ["#e8edb8", "#bbe2c4", "#7cc0db", "#61a1ca"]
 
-# ---- diagnosis palette (new names) ----
+# ---- diagnosis palette (yellow→blue ramp per your request) ----
 DIAG_PALETTE = {
-    "High Stress":   "#f03b20",
-    "Elevated":      "#fd8d3c",
-    "Typical/Other": "#74c476",
-    "No Supply":     "#8c8c8c",
+    "High Stress":   "#61a1ca",  # blue
+    "Elevated":      "#7cc0db",  # light blue
+    "Typical/Other": "#bbe2c4",  # light green
+    "No Supply":     "#e8edb8",  # yellow
 }
 
 # ---------- cached loaders ----------
@@ -81,14 +83,13 @@ def load_counties():
 
 @st.cache_data(show_spinner=False)
 def load_hourly():
-    # df = pd.read_parquet(RAW_HOURLY_CSV)
-    # #some quick processing for the new data format
-    # df = df.drop(columns = {"county_name"})
-     # V2
-    df = pd.read_excel(RAW_HOURLY_CSV, sheet_name = 'park_dem_calibrtd_by_hour')
-    ## some quick processing for the new data format
-    df = df.drop(columns = {"county_name", "total_expanded_daily_parking_demand"})
-    df.columns = ["county","hour","des_demand", "undes_demand", "supply"]
+    # V2 Excel input
+    df = pd.read_excel(RAW_HOURLY_CSV, sheet_name='park_dem_calibrtd_by_hour')
+    # quick processing for the new data format
+    drop_cols = [c for c in ["county_name", "total_expanded_daily_parking_demand"] if c in df.columns]
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
+    df.columns = ["county", "hour", "des_demand", "undes_demand", "supply"]
     df.columns = [c.strip().lower() for c in df.columns]
     df["county"] = df["county"].astype(str).str.zfill(5)
     df["hour"] = df["hour"].astype(int)
@@ -102,7 +103,6 @@ def load_spots(path: Path):
         return None, f"Spots file not found: {path}"
     try:
         gdf = gpd.read_file(path).to_crs(epsg=4326)
-        # keep only points; ignore other geometries if any
         gdf = gdf[gdf.geometry.notna() & gdf.geometry.geom_type.eq("Point")].copy()
         return gdf, None
     except Exception as e:
@@ -114,7 +114,6 @@ def load_roadways(path: Path):
         return None, f"Roadways file not found: {path}"
     try:
         gdf = gpd.read_file(path).to_crs(epsg=4326)
-        # keep only line-ish geometries
         gdf = gdf[gdf.geometry.notna() & gdf.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
         return gdf, None
     except Exception as e:
@@ -127,51 +126,63 @@ def make_base_map():
     m = folium.Map(location=[39.9, -86.3], zoom_start=7, tiles=None)
 
     token = st.secrets.get("MAPBOX_TOKEN")
-    # e.g. "mapbox/streets-v11" or your custom style "youracct/your-style-id"
-    style = st.secrets.get("MAPBOX_STYLE", "mapbox/streets-v11")
+    style = st.secrets.get("MAPBOX_STYLE", "mapbox/streets-v11")  # e.g., "mapbox/streets-v11" or "user/style-id"
 
     if token:
+        # 512px tiles + zoomOffset for crisp rendering
         folium.TileLayer(
-            tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}@2x?access_token={token}",
-            attr="Mapbox", name="Basemap", control=False
+            tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/512/{{z}}/{{x}}/{{y}}?access_token={token}",
+            attr="Mapbox",
+            name="Basemap",
+            control=False,
+            max_zoom=20,
+            tileSize=512,      # Leaflet option via **kwargs (note camelCase)
+            zoomOffset=-1      # Leaflet option via **kwargs
         ).add_to(m)
     else:
-        # fallback; still hidden from LayerControl
         folium.TileLayer("cartodbpositron", name="Basemap", control=False).add_to(m)
 
-    # smaller & slightly transparent tooltips inside the map iframe
+    # Smaller & slightly transparent tooltips inside the map iframe + Inter font
     m.get_root().header.add_child(folium.Element("""
     <style>
       .leaflet-tooltip {
         font-size: 11px;
         opacity: 0.85;
+        font-family: Inter, Arial, sans-serif;
       }
     </style>
     """))
     return m
-    
+
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
+    """Quantile-bucketed choropleth with top-right colorbar ('ruler')."""
     gdf = gdf_joined.copy()
     vals = pd.to_numeric(gdf[color_col], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    # Quantiles and dedupe (in case of ties/constant columns)
-    edges = np.quantile(vals, [0, 0.25, 0.5, 0.75, 1.0])
-    edges = np.unique(np.round(edges, 2))
+    # Quantile edges (0, 25, 50, 75, 100). Dedup to handle flat distributions.
+    raw_edges = np.quantile(vals, [0, 0.25, 0.5, 0.75, 1.0])
+    edges = np.unique(np.round(raw_edges, 6))
+
+    # Choose palette size to match bins actually used
     colors = PALETTE_5 if len(edges) >= 5 else PALETTE_4
 
-    # Bin by number of colors; duplicates='drop' guards weird distributions
-    bins = pd.cut(vals, bins=len(colors), labels=False, include_lowest=True, duplicates="drop")
-    gdf["_bin"] = bins
+    # If too few unique values, fallback to min/max
+    if len(edges) < 2:
+        edges = np.array([vals.min(), vals.max()])
 
-    # Compute pretty range labels for legend
-    # (reconstruct edges matching number of bins actually used)
+    # Bin by quantile edges; labels=False -> integer bin index
+    gdf["_bin"] = pd.cut(vals, bins=edges, include_lowest=True, labels=False, duplicates="drop")
     unique_bins = sorted(gdf["_bin"].dropna().unique())
     n_bins = len(unique_bins)
-    # If duplicates dropped, rebuild equal quantiles over data for clean legend
+
+    # If duplicates collapsed, rebuild uniform edges across value range for a clean bar,
+    # then re-bin so map and colorbar always align.
     if n_bins != len(colors):
-        edges = np.quantile(vals, np.linspace(0, 1, n_bins + 1))
-        edges = np.round(edges, 2)
+        edges = np.linspace(vals.min(), vals.max(), n_bins + 1) if n_bins > 0 else np.array([0, 1])
         colors = colors[:n_bins]
+        gdf["_bin"] = pd.cut(vals, bins=edges, include_lowest=True, labels=False, duplicates="drop")
+        unique_bins = sorted(gdf["_bin"].dropna().unique())
+        n_bins = len(unique_bins)
 
     color_map = {i: colors[i] for i in range(n_bins)}
 
@@ -183,23 +194,34 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     m = make_base_map()
     folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
 
-    # Legend HTML
-    legend_html = f"""
-    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
-                background: white; padding: 8px 10px; border: 1px solid #ccc;">
-      <b>{legend_label}</b><br>
-    """
-    for i in range(n_bins):
-        lo, hi = edges[i], edges[i + 1]
-        label = f"{lo:,.0f} – {hi:,.0f}" if lo != hi else f"{hi:,.0f}"
-        legend_html += f'<span style="display:inline-block;width:12px;height:12px;background:{colors[i]};margin-right:6px;border:1px solid #666;"></span>{label}<br>'
-    legend_html += "</div>"
-    m.get_root().html.add_child(folium.Element(legend_html))
+    # Top-right colorbar (continuous ramp using chosen colors)
+    if n_bins > 0:
+        colormap = cm.LinearColormap(colors=colors, vmin=float(edges[0]), vmax=float(edges[-1]))
+        colormap.caption = legend_label
+        colormap.add_to(m)
+        # Reposition to top-right and apply Inter
+        m.get_root().header.add_child(folium.Element("""
+        <style>
+          .branca-colormap {
+            z-index: 9999;
+            position: fixed !important;
+            top: 30px;
+            right: 30px;
+            bottom: auto !important;
+            left: auto !important;
+            font-family: Inter, Arial, sans-serif;
+          }
+          .branca-colormap .caption {
+            font-family: Inter, Arial, sans-serif;
+            font-size: 12px;
+          }
+        </style>
+        """))
 
     return m
 
-
 def make_categorical_map(gdf_joined, category_col, palette=None):
+    """Diagnosis categorical map with palette + legend bottom-left."""
     palette = palette or DIAG_PALETTE
     m = make_base_map()
 
@@ -220,8 +242,8 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     m.get_root().html.add_child(folium.Element(legend_html))
     return m
 
-
 def attach_tooltip_and_popup(m, gdf_joined):
+    """Small, semi-transparent tooltip with 4 fields + popup FIPS to capture clicks."""
     fields = [
         ("County", "county_name"),
         ("FIPS", "county_fips"),
@@ -251,14 +273,11 @@ def attach_tooltip_and_popup(m, gdf_joined):
     folium.GeoJsonPopup(fields=["county_fips"]).add_to(gj)
     gj.add_to(m)
 
-
-
 def add_roadways_layer(m, road_gdf):
     """Add roadways (lines) as a toggleable layer (ON by default), no tooltip."""
     if road_gdf is None or road_gdf.empty:
         return
     fg = folium.FeatureGroup(name="Roadways", show=True)
-    # simple styling; you can extend with color by 'highway' type if desired
     folium.GeoJson(
         road_gdf,
         name="Roadways",
@@ -267,7 +286,7 @@ def add_roadways_layer(m, road_gdf):
     fg.add_to(m)
 
 def add_truck_spots_layer(m, spots_gdf):
-    """Add spots as a toggleable layer (ON by default), no tooltip/popup."""
+    """Add truck spots as a toggleable layer (ON by default), no tooltip/popup."""
     if spots_gdf is None or spots_gdf.empty:
         return
     fg = folium.FeatureGroup(name="Truck parking spots", show=True)
@@ -309,9 +328,8 @@ with st.sidebar:
         index=0
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the download on the right.")
-    if LOGO_PATH.exists():
+    if LOGO_PATH:
         st.image(str(LOGO_PATH), use_container_width=True)
-
 
 # data
 daily = load_daily()
@@ -354,14 +372,14 @@ if spots_err:
 if road_err:
     st.info(road_err)
 
-# Defaul County
+# Default county (Marion)
 if "selected_fips" not in st.session_state or not st.session_state.selected_fips:
     st.session_state.selected_fips = "18097"  # Marion
 if "ignore_next_click" not in st.session_state:
     st.session_state.ignore_next_click = False
 
 # layout
-col_map, col_chart = st.columns([3, 2], gap="large")
+col_map, col_right = st.columns([3, 2], gap="large")
 
 with col_map:
     if map_metric_label == "Diagnosis":
@@ -399,7 +417,7 @@ if st.session_state.ignore_next_click:
 # helper: fips → county name
 fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
-with col_chart:
+with col_right:
     st.markdown("### Hourly demand distribution")
 
     def hourly_long(df_hourly, fips=None):
@@ -431,9 +449,9 @@ with col_chart:
     # Add horizontal supply line
     title, bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
     st.write(f"**{title}**")
-    
+
     bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
-    
+
     stacked = (
         alt.Chart(bars_long)
           .mark_bar()
@@ -455,17 +473,17 @@ with col_chart:
           )
           .properties(height=400)
     )
-    
+
     # horizontal supply line (constant across hours)
     supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
     rule = alt.Chart(pd.DataFrame({"y": [supply_const]})).mark_rule().encode(y="y:Q")
-    
+
     chart = (stacked + rule).configure_axis(
         labelFont="Inter", titleFont="Inter"
     ).configure_legend(
         labelFont="Inter", titleFont="Inter"
     )
-    
+
     st.altair_chart(chart, use_container_width=True)
 
     c1, c2 = st.columns(2)
@@ -476,7 +494,6 @@ with col_chart:
             st.rerun()
     with c2:
         # Download HOURLY (scoped to selection; default statewide)
-        # (Keep raw numeric precision in the CSV download)
         csv_bytes = hourly_table.to_csv(index=False).encode("utf-8")
         label = "Download hourly demand (statewide)" if st.session_state.selected_fips is None \
                 else f"Download hourly demand ({title})"
@@ -487,39 +504,39 @@ with col_chart:
             mime="text/csv",
         )
 
-st.markdown("### County profile")
+    # --- County profile under the chart (right column) ---
+    st.markdown("### County profile")
 
-profile_fields = [
-    ("County", "county_name"),
-    ("FIPS", "county_fips"),
-    ("Diagnosis", "diagnosis"),
-    ("Max hourly designated demand", "max_hourly_des_demand_fmt"),
-    ("Max hourly undesignated demand", "max_hourly_undes_demand_fmt"),
-    ("Max hourly total demand", "max_hourly_total_demand_fmt"),
-    ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
-    ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
-    ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
-    ("Supply (hourly fixed)", "supply_fmt"),
-    ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
-    ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
-    ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
-    ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
-]
+    profile_fields = [
+        ("County", "county_name"),
+        ("FIPS", "county_fips"),
+        ("Diagnosis", "diagnosis"),
+        ("Max hourly designated demand", "max_hourly_des_demand_fmt"),
+        ("Max hourly undesignated demand", "max_hourly_undes_demand_fmt"),
+        ("Max hourly total demand", "max_hourly_total_demand_fmt"),
+        ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
+        ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
+        ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
+        ("Supply (hourly fixed)", "supply_fmt"),
+        ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
+        ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
+        ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
+        ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
+    ]
 
-def county_profile(gdf, fips):
-    row = gdf[gdf["county_fips"] == fips].head(1)
-    if row.empty:
-        return pd.DataFrame({"Metric": [], "Value": []})
-    items = []
-    for label, col in profile_fields:
-        val = row.iloc[0].get(col, "")
-        items.append((label, val))
-    dfp = pd.DataFrame(items, columns=["Metric", "Value"])
-    return dfp
+    def county_profile(gdf, fips):
+        row = gdf[gdf["county_fips"] == fips].head(1)
+        if row.empty:
+            return pd.DataFrame({"Metric": [], "Value": []})
+        items = []
+        for label, col in profile_fields:
+            val = row.iloc[0].get(col, "")
+            items.append((label, val))
+        dfp = pd.DataFrame(items, columns=["Metric", "Value"])
+        return dfp
 
-profile_df = county_profile(gdf_joined, st.session_state.selected_fips)
-st.dataframe(profile_df, hide_index=True, use_container_width=True)
-
+    profile_df = county_profile(gdf_joined, st.session_state.selected_fips)
+    st.dataframe(profile_df, hide_index=True, use_container_width=True)
 
 with st.expander("Metrics & diagnosis"):
     st.markdown(r"""
@@ -543,8 +560,3 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
-
-
-
-
-

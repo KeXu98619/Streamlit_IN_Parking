@@ -48,7 +48,7 @@ html, body, [class*="css"] {
 # ---- logo path (update to your file) ----
 LOGO_PATH = Path("logo.png")  # replace with your PNG path
 
-DAILY_CSV = Path("indiana_county_daily_v2.csv")
+DAILY_CSV = Path("indiana_county_daily_ver2.csv")
 COUNTIES_GEOJSON = Path("indiana_counties_500k.geojson")
 #updated to the latest data 
 ## V2
@@ -543,6 +543,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

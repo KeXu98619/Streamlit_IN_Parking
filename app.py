@@ -1,5 +1,6 @@
 # app.py — Indiana Truck Parking (backend truck-spots overlay ON by default)
 import streamlit as st
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 from pathlib import Path
@@ -29,13 +30,43 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
+# ---- fonts (Streamlit-side) ----
+st.markdown("""
+<style>
+/* Streamlit UI font */
+html, body, [class*="css"] {
+  font-family: Inter, Arial, sans-serif !important;
+}
+/* Table font a bit tighter */
+.dataframe td, .dataframe th {
+  font-size: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # DATA_DIR = Path("data")
-DAILY_CSV = Path("indiana_county_daily.csv")
+# ---- logo path (update to your file) ----
+LOGO_PATH = Path("logo.png")  # replace with your PNG path
+
+DAILY_CSV = Path("indiana_county_daily_v2.csv")
 COUNTIES_GEOJSON = Path("indiana_counties_500k.geojson")
 #updated to the latest data 
-RAW_HOURLY_CSV = Path("in_parking_demand_data_ver0.parquet")# used for stacked bars & hourly download
+## V2
+RAW_HOURLY_CSV = Path("in_parking_demand_data_ver2.xlsx")# used for stacked bars & hourly download
 SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")            # backend truck parking spots
 ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")   # roadway lines (no tooltip)
+
+# ---- choropleth palettes (5 and 4 stops) ----
+PALETTE_5 = ["#e8edb8", "#bbe2c4", "#9bd4d0", "#7cc0db", "#61a1ca"]
+PALETTE_4 = ["#e8edb8", "#bbe2c4", "#7cc0db", "#61a1ca"]
+
+# ---- diagnosis palette (new names) ----
+DIAG_PALETTE = {
+    "High Stress":   "#f03b20",
+    "Elevated":      "#fd8d3c",
+    "Typical/Other": "#74c476",
+    "No Supply":     "#8c8c8c",
+}
 
 # ---------- cached loaders ----------
 @st.cache_data(show_spinner=False)
@@ -50,9 +81,13 @@ def load_counties():
 
 @st.cache_data(show_spinner=False)
 def load_hourly():
-    df = pd.read_parquet(RAW_HOURLY_CSV)
-    #some quick processing for the new data format
-    df = df.drop(columns = {"county_name"})
+    # df = pd.read_parquet(RAW_HOURLY_CSV)
+    # #some quick processing for the new data format
+    # df = df.drop(columns = {"county_name"})
+     # V2
+    df = pd.read_excel(csv_path, sheet_name = 'park_dem_calibrtd_by_hour')
+    ## some quick processing for the new data format
+    df = df.drop(columns = {"county_name", "total_expanded_daily_parking_demand"})
     df.columns = ["county","hour","des_demand", "undes_demand", "supply"]
     df.columns = [c.strip().lower() for c in df.columns]
     df["county"] = df["county"].astype(str).str.zfill(5)
@@ -86,39 +121,95 @@ def load_roadways(path: Path):
         return None, f"Could not read roadways ({path.name}): {e}"
 
 # ---------- map builders ----------
+def make_base_map():
+    """Create a Leaflet map using Mapbox if token present, else cartodbpositron.
+       Hide basemap from LayerControl."""
+    m = folium.Map(location=[39.9, -86.3], zoom_start=7, tiles=None)
+
+    token = st.secrets.get("MAPBOX_TOKEN")
+    # e.g. "mapbox/streets-v11" or your custom style "youracct/your-style-id"
+    style = st.secrets.get("MAPBOX_STYLE", "mapbox/streets-v11")
+
+    if token:
+        folium.TileLayer(
+            tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}@2x?access_token={token}",
+            attr="Mapbox", name="Basemap", control=False
+        ).add_to(m)
+    else:
+        # fallback; still hidden from LayerControl
+        folium.TileLayer("cartodbpositron", name="Basemap", control=False).add_to(m)
+
+    # smaller & slightly transparent tooltips inside the map iframe
+    m.get_root().header.add_child(folium.Element("""
+    <style>
+      .leaflet-tooltip {
+        font-size: 11px;
+        opacity: 0.85;
+      }
+    </style>
+    """))
+    return m
+    
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
-    m = folium.Map(location=[39.9, -86.3], zoom_start=7, tiles="cartodbpositron")
-    folium.Choropleth(
-        geo_data=gdf_joined.to_json(),
-        data=gdf_joined,
-        columns=["county_fips", color_col],
-        key_on="feature.properties.county_fips",
-        fill_color="YlOrRd",
-        fill_opacity=0.8,
-        line_opacity=0.6,
-        nan_fill_color="#cccccc",
-        legend_name=legend_label,
-    ).add_to(m)
+    gdf = gdf_joined.copy()
+    vals = pd.to_numeric(gdf[color_col], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    # Quantiles and dedupe (in case of ties/constant columns)
+    edges = np.quantile(vals, [0, 0.25, 0.5, 0.75, 1.0])
+    edges = np.unique(np.round(edges, 2))
+    colors = PALETTE_5 if len(edges) >= 5 else PALETTE_4
+
+    # Bin by number of colors; duplicates='drop' guards weird distributions
+    bins = pd.cut(vals, bins=len(colors), labels=False, include_lowest=True, duplicates="drop")
+    gdf["_bin"] = bins
+
+    # Compute pretty range labels for legend
+    # (reconstruct edges matching number of bins actually used)
+    unique_bins = sorted(gdf["_bin"].dropna().unique())
+    n_bins = len(unique_bins)
+    # If duplicates dropped, rebuild equal quantiles over data for clean legend
+    if n_bins != len(colors):
+        edges = np.quantile(vals, np.linspace(0, 1, n_bins + 1))
+        edges = np.round(edges, 2)
+        colors = colors[:n_bins]
+
+    color_map = {i: colors[i] for i in range(n_bins)}
+
+    def style_fn(feat):
+        b = feat["properties"].get("_bin")
+        color = color_map.get(b, "#cccccc")
+        return {"fillColor": color, "color": "#555", "weight": 0.8, "fillOpacity": 0.8}
+
+    m = make_base_map()
+    folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
+
+    # Legend HTML
+    legend_html = f"""
+    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
+                background: white; padding: 8px 10px; border: 1px solid #ccc;">
+      <b>{legend_label}</b><br>
+    """
+    for i in range(n_bins):
+        lo, hi = edges[i], edges[i + 1]
+        label = f"{lo:,.0f} – {hi:,.0f}" if lo != hi else f"{hi:,.0f}"
+        legend_html += f'<span style="display:inline-block;width:12px;height:12px;background:{colors[i]};margin-right:6px;border:1px solid #666;"></span>{label}<br>'
+    legend_html += "</div>"
+    m.get_root().html.add_child(folium.Element(legend_html))
+
     return m
 
+
 def make_categorical_map(gdf_joined, category_col, palette=None):
-    if palette is None:
-        palette = {
-            "Designated demand near supply capacity (≥85%)": "#f03b20",
-            "Enough for designated; overflow in undesignated (total > supply)": "#fd8d3c",
-            "Enough for demand; consistent undesignated observed (total ≤ supply)": "#feb24c",
-            "No overflow observed": "#74c476",
-        }
-    m = folium.Map(location=[39.9, -86.3], zoom_start=7, tiles="cartodbpositron")
+    palette = palette or DIAG_PALETTE
+    m = make_base_map()
 
     def style_fn(feat):
         cat = feat["properties"].get(category_col, None)
         color = palette.get(cat, "#8c8c8c")
         return {"fillColor": color, "color": "#555", "weight": 0.8, "fillOpacity": 0.8}
 
-    gj = folium.GeoJson(gdf_joined, style_function=style_fn, name="Diagnosis")
-    gj.add_to(m)
-    # build a simple categorical legend
+    folium.GeoJson(gdf_joined, style_function=style_fn, name="Diagnosis").add_to(m)
+
     legend_html = """
     <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc;">
       <b>Diagnosis</b><br>
@@ -129,32 +220,25 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     m.get_root().html.add_child(folium.Element(legend_html))
     return m
 
+
 def attach_tooltip_and_popup(m, gdf_joined):
-    # Display-only integer columns already prepared as *_fmt
     fields = [
         ("County", "county_name"),
         ("FIPS", "county_fips"),
-        ("Max hourly des. demand", "max_hourly_des_demand_fmt"),
-        ("Max hourly undes. demand", "max_hourly_undes_demand_fmt"),
-        ("Max hourly total demand", "max_hourly_total_demand_fmt"),
-        ("Acc. des. demand (truck-hrs)", "acc_des_demand_fmt"),
-        ("Acc. undes. demand (truck-hrs)", "acc_undes_demand_fmt"),
-        ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
         ("Supply (hourly fixed)", "supply_fmt"),
-        ("Max hourly des. deficit", "max_hourly_des_deficit_fmt"),
-        ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
-        ("Acc. des. deficit (truck-hrs)", "acc_des_deficit_fmt"),
-        ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
-        ("Diagnosis", "diagnosis"),
+        ("Max hourly total demand", "max_hourly_total_demand_fmt"),
     ]
-
     tooltip = folium.features.GeoJsonTooltip(
         fields=[f for _, f in fields],
         aliases=[a for a, _ in fields],
         sticky=True,
         localize=True,
-        labels=True,    # keep the "Label: value" format
-        # no style override — use Leaflet defaults
+        labels=True,
+        style=("background-color: rgba(255,255,255,0.9);"
+               "border: 1px solid #ccc;"
+               "border-radius: 4px;"
+               "padding: 6px;"
+               "box-shadow: 0 1px 3px rgba(0,0,0,0.2);")
     )
 
     gj = folium.GeoJson(
@@ -225,6 +309,9 @@ with st.sidebar:
         index=0
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the download on the right.")
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), use_container_width=True)
+
 
 # data
 daily = load_daily()
@@ -267,9 +354,9 @@ if spots_err:
 if road_err:
     st.info(road_err)
 
-# session state: selected county + ignore-next-click guard
-if "selected_fips" not in st.session_state:
-    st.session_state.selected_fips = None
+# Defaul County
+if "selected_fips" not in st.session_state or not st.session_state.selected_fips:
+    st.session_state.selected_fips = "18097"  # Marion
 if "ignore_next_click" not in st.session_state:
     st.session_state.ignore_next_click = False
 
@@ -313,7 +400,7 @@ if st.session_state.ignore_next_click:
 fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
 with col_chart:
-    st.markdown("### Hourly demand distribution (stacked)")
+    st.markdown("### Hourly demand distribution")
 
     def hourly_long(df_hourly, fips=None):
         if fips:
@@ -341,12 +428,12 @@ with col_chart:
 
         return title, long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "supply"]]
 
+    # Add horizontal supply line
     title, bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
     st.write(f"**{title}**")
-
-    # enforce stack order + integer formatting for visuals
+    
     bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
-
+    
     stacked = (
         alt.Chart(bars_long)
           .mark_bar()
@@ -357,9 +444,9 @@ with col_chart:
                   "type:N",
                   title="",
                   scale=alt.Scale(domain=["Designated", "Undesignated"]),
-                  sort=["Designated", "Undesignated"]  # legend order
+                  sort=["Designated", "Undesignated"]
               ),
-              order=alt.Order("type_order:Q"),  # stack order: 0 -> 1
+              order=alt.Order("type_order:Q"),
               tooltip=[
                   alt.Tooltip("hour:O", title="Hour"),
                   alt.Tooltip("type:N", title="Type"),
@@ -368,7 +455,18 @@ with col_chart:
           )
           .properties(height=400)
     )
-    st.altair_chart(stacked, use_container_width=True)
+    
+    # horizontal supply line (constant across hours)
+    supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
+    rule = alt.Chart(pd.DataFrame({"y": [supply_const]})).mark_rule().encode(y="y:Q")
+    
+    chart = (stacked + rule).configure_axis(
+        labelFont="Inter", titleFont="Inter"
+    ).configure_legend(
+        labelFont="Inter", titleFont="Inter"
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -389,8 +487,42 @@ with col_chart:
             mime="text/csv",
         )
 
+st.markdown("### County profile")
+
+profile_fields = [
+    ("County", "county_name"),
+    ("FIPS", "county_fips"),
+    ("Diagnosis", "diagnosis"),
+    ("Max hourly designated demand", "max_hourly_des_demand_fmt"),
+    ("Max hourly undesignated demand", "max_hourly_undes_demand_fmt"),
+    ("Max hourly total demand", "max_hourly_total_demand_fmt"),
+    ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
+    ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
+    ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
+    ("Supply (hourly fixed)", "supply_fmt"),
+    ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
+    ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
+    ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
+    ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
+]
+
+def county_profile(gdf, fips):
+    row = gdf[gdf["county_fips"] == fips].head(1)
+    if row.empty:
+        return pd.DataFrame({"Metric": [], "Value": []})
+    items = []
+    for label, col in profile_fields:
+        val = row.iloc[0].get(col, "")
+        items.append((label, val))
+    dfp = pd.DataFrame(items, columns=["Metric", "Value"])
+    return dfp
+
+profile_df = county_profile(gdf_joined, st.session_state.selected_fips)
+st.dataframe(profile_df, hide_index=True, use_container_width=True)
+
+
 with st.expander("Metrics & diagnosis"):
-    st.markdown("""
+    st.markdown(r"""
 **Daily metrics (per county)** shown in tooltips & map selector:
 
 - **Max hourly designated demand** - highest designated count in any hour  
@@ -406,9 +538,11 @@ with st.expander("Metrics & diagnosis"):
 - **Acc. total deficit (truck-hours)** - sum(max(0, total - supply))
 
 **Diagnosis rules (per county):**
-- **Designated demand near supply capacity (≥85%)**  
-- **Enough for designated; overflow in undesignated (total > supply)**  
-- **Enough for demand; consistent undesignated observed (total ≤ supply)**  
+- **High Stress** — Total demand hours ≥ 1000 and either (max hourly designated demand ÷ supply ≥ 0.9) or (undesigned share > 0.5).  
+- **Elevated** — Not High Stress, and total demand hours ≥ 300 and either (max hourly designated demand ÷ supply ≥ 0.7) or (undesigned share > 0.2).  
+- **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
+- **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 

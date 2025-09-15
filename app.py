@@ -85,7 +85,7 @@ def load_hourly():
     # #some quick processing for the new data format
     # df = df.drop(columns = {"county_name"})
      # V2
-    df = pd.read_excel(csv_path, sheet_name = 'park_dem_calibrtd_by_hour')
+    df = pd.read_excel(RAW_HOURLY_CSV, sheet_name = 'park_dem_calibrtd_by_hour')
     ## some quick processing for the new data format
     df = df.drop(columns = {"county_name", "total_expanded_daily_parking_demand"})
     df.columns = ["county","hour","des_demand", "undes_demand", "supply"]
@@ -543,6 +543,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

@@ -32,10 +32,24 @@ st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layou
 # -------- Fonts (Inter via Bunny CDN; strong selector) --------
 st.markdown("""
 <link rel="preconnect" href="https://fonts.bunny.net">
-<link href="https://fonts.bunny.net/css?family=inter:400,600" rel="stylesheet" />
+<link href="https://fonts.bunny.net/css?family=inter:400,600" rel="sheet" />
 <style>
   * { font-family: 'Inter', sans-serif !important; }
   .stDataFrame table, .dataframe td, .dataframe th { font-size: 12px !important; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<!-- Old Material Icons -->
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+<!-- New Material Symbols (Outlined) -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+<style>
+  /* Ensure ligatures render as icons if Streamlit uses the Symbols family */
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    font-family: 'Material Symbols Outlined';
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -151,61 +165,64 @@ def _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0)):
         return np.linspace(vmin, vmax, len(q))
 
 def _bin_and_color_series(vals, palette5, palette4):
-    """
-    Returns: bin_idx (int series), colors (list), edges (list), zero_heavy (bool)
-    - Handles zero-heavy metrics by binning positives separately and giving zero its own bin.
-    - Forces max value into the top bin to avoid float edge gaps.
-    """
     vals = pd.to_numeric(pd.Series(vals), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0)
     vmin, vmax = float(vals.min()), float(vals.max())
     zero_mask = vals.eq(0)
     zero_share = zero_mask.mean()
     pos_vals = vals[~zero_mask]
 
-    # Case A: zero-heavy and there are positives → create a zero bin + quantiles on positives
     if zero_share > 0.5 and not pos_vals.empty:
         pos_edges = _quantile_edges(pos_vals, q=(0, 0.25, 0.5, 0.75, 1.0))
-        # ensure strictly increasing
         pos_edges = np.unique(pos_edges)
         if len(pos_edges) < 2:
             pos_edges = np.linspace(float(pos_vals.min()), float(pos_vals.max()), 5)
-        # bin positives (labels 0..n-1), then +1 to make room for zero bin at 0
-        pos_bins = pd.cut(vals, bins=pos_edges, include_lowest=True, labels=False, duplicates="drop")
-        bin_idx = pos_bins.add(1).astype("float")  # positives start at 1
-        bin_idx[zero_mask] = 0  # zeros in bin 0
-        # force max into top bin
-        bin_idx[vals == vmax] = bin_idx.max(skipna=True)
 
-        # total bins = 1 (zero) + number of positive bins actually used
-        uniq_bins = sorted(pd.Series(bin_idx).dropna().unique())
-        n_bins = len(uniq_bins)
+        pos_bins = pd.cut(vals, bins=pos_edges, include_lowest=True, labels=False, duplicates="drop").astype("float")
+
+        # start positives at 1; reserve 0 for zeros
+        bin_idx = pos_bins.add(1)
+        bin_idx[zero_mask] = 0
+
+        # force max into the top bin (protect against float-edge gaps)
+        if not np.isnan(vmax):
+            top = np.nanmax(bin_idx)
+            bin_idx[vals == vmax] = top
+
+        # final NA guard: fill any remaining NaN with 0 (zero bin)
+        bin_idx = bin_idx.fillna(0)
+
+        # colors: number of actually used bins
+        uniq_bins = sorted(pd.Series(bin_idx).unique())
+        n_bins = max(1, len(uniq_bins))
         colors = (palette5 if n_bins >= 5 else palette4)[:n_bins]
-        # Build edges for legend: prepend 0 to positive edges
-        edges = np.concatenate(([0.0], pos_edges))
-        zero_heavy = True
-        return bin_idx.astype(int), colors, edges, zero_heavy
 
-    # Case B: not zero-heavy → quantiles on all values
+        # legend edges: prepend a 0 to positive edges (zero bin)
+        edges = np.concatenate(([0.0], pos_edges))
+        return bin_idx.astype(int), colors, edges, True
+
+    # Not zero-heavy → quantiles on all values
     edges = _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0))
     edges = np.unique(edges)
     if len(edges) < 2:
-        # constant; single bin
+        # constant distribution
         bin_idx = pd.Series(0, index=vals.index)
-        colors = [palette4[0], palette4[0]]  # duplicate to satisfy colormap >= 2
-        zero_heavy = False
-        return bin_idx.astype(int), colors, np.array([vmin, vmax]), zero_heavy
+        colors = [palette4[0], palette4[0]]  # 2-color flat bar to satisfy colormap
+        return bin_idx.astype(int), colors, np.array([vmin, vmax]), False
 
-    raw_bins = pd.cut(vals, bins=edges, include_lowest=True, labels=False, duplicates="drop")
-    bin_idx = raw_bins.astype("float")
+    raw_bins = pd.cut(vals, bins=edges, include_lowest=True, labels=False, duplicates="drop").astype("float")
+
     # force max into top bin
-    bin_idx[vals == vmax] = np.nanmax(bin_idx)
-    bin_idx = bin_idx.fillna(np.nanmax(bin_idx))
+    top = np.nanmax(raw_bins)
+    raw_bins[vals == vmax] = top
 
-    uniq_bins = sorted(pd.Series(bin_idx).dropna().unique())
-    n_bins = len(uniq_bins)
+    # final NA guard
+    bin_idx = raw_bins.fillna(0)
+
+    uniq_bins = sorted(pd.Series(bin_idx).unique())
+    n_bins = max(1, len(uniq_bins))
     colors = (palette5 if n_bins >= 5 else palette4)[:n_bins]
-    zero_heavy = False
-    return bin_idx.astype(int), colors, edges, zero_heavy
+    return bin_idx.astype(int), colors, edges, False
+
 
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     """Discrete (quantile/zero-aware) choropleth with a matching step colorbar."""
@@ -213,25 +230,24 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     vals = gdf[color_col].values
     bin_idx, colors, edges, zero_heavy = _bin_and_color_series(vals, PALETTE_5, PALETTE_4)
 
-    # Precompute hex colors per feature (most reliable against JSON round-trip)
+    # Precompute colors per feature (bullet-proof)
     color_map = {i: colors[i] for i in range(len(colors))}
     gdf["_bin"] = bin_idx
-    gdf["_color"] = gdf["_bin"].map(color_map).fillna("#cccccc")
-
+    gdf["_color"] = gdf["_bin"].map(color_map)
+    # Fallback color if something slipped through
+    gdf["_color"] = gdf["_color"].fillna(colors[-1] if len(colors) else "#cccccc")
+    
     def style_fn(feat):
-        color = feat["properties"].get("_color", "#cccccc")
-        return {"fillColor": color, "color": "#555", "weight": 0.8, "fillOpacity": 0.8}
+        return {"fillColor": feat["properties"].get("_color", "#cccccc"),
+                "color": "#555", "weight": 0.8, "fillOpacity": 0.8}
+    
+    # Step colorbar: colors must be len(edges)-1; trim or pad if needed
+    needed = max(1, len(edges) - 1)
+    if len(colors) != needed:
+        colors = (colors + [colors[-1]])[:needed] if colors else ["#cccccc", "#cccccc"]
+    
+    colormap = cm.StepColormap(colors=colors, vmin=float(edges[0]), vmax=float(edges[-1]), index=list(edges))
 
-    m = make_base_map()
-    folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
-
-    # Step colorbar that matches bins/edges
-    # If edges collapse (constant), still show a 2-stop “flat” bar to avoid errors.
-    vmin, vmax = float(edges[0]), float(edges[-1])
-    if len(colors) >= 2:
-        colormap = cm.StepColormap(colors=colors, vmin=vmin, vmax=vmax, index=list(edges))
-    else:
-        colormap = cm.LinearColormap(colors=[colors[0], colors[0]], vmin=vmin, vmax=vmax)
 
     colormap.caption = legend_label if not (vmin == vmax) else f"{legend_label} (constant = {vmin:,.0f})"
     colormap.add_to(m)
@@ -450,7 +466,7 @@ with col_right:
                        alt.Tooltip("type:N", title="Type"),
                        alt.Tooltip("sum(value):Q", title="Demand", format=",.0f")]
           )
-          .properties(height=320, padding={"bottom": 12})
+          .properties(height=320)
     )
 
     # Yellow supply rule with friendly tooltip
@@ -460,8 +476,11 @@ with col_right:
         y="y:Q", tooltip=alt.Tooltip("label:N", title="")
     )
 
-    chart = (stacked + rule).configure_axis(labelFont="Inter", titleFont="Inter") \
-                            .configure_legend(labelFont="Inter", titleFont="Inter")
+    chart = alt.layer(stacked, rule) \
+           .properties(padding={"bottom": 12}) \
+           .configure_axis(labelFont="Inter", titleFont="Inter") \
+           .configure_legend(labelFont="Inter", titleFont="Inter")
+
     st.altair_chart(chart, use_container_width=True)
 
     # County profile
@@ -515,3 +534,4 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+

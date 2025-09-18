@@ -30,6 +30,7 @@ require_password()
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
 # -------- Fonts (Inter via Bunny CDN; strong selector) --------
+# --- Global styles: fonts, icons, base UI, card variants ---
 st.markdown("""
 <!-- Inter (Bunny CDN) -->
 <link rel="preconnect" href="https://fonts.bunny.net">
@@ -45,7 +46,8 @@ st.markdown("""
   html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stButton, .stCaption, .stDownloadButton, .stMetric {
     font-family: 'Inter', sans-serif !important;
   }
-  /* Keep icons rendering as icons */
+
+  /* Keep icons rendering as icons (prevents 'keyboard_double_arrow_right' text) */
   .material-icons {
     font-family: 'Material Icons' !important;
     font-weight: normal; font-style: normal; font-size: 24px; line-height: 1;
@@ -57,10 +59,30 @@ st.markdown("""
     font-family: 'Material Symbols Outlined' !important;
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   }
-  /* Table text a bit tighter */
+
+  /* Tables a bit tighter */
   .stDataFrame table, .dataframe td, .dataframe th { font-size: 12px !important; }
+
+  /* Card variants (choose one per panel) */
+  .card { border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+  .card.soft {
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .card.glass {
+    background: rgba(255,255,255,0.65);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.10);
+    border: 1px solid rgba(255,255,255,0.4);
+  }
+  .card.neu {
+    background: #f3f4f6;
+    box-shadow: 8px 8px 16px #d1d5db, -8px -8px 16px #ffffff;
+  }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # -------- Assets/paths --------
@@ -254,6 +276,13 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     def style_fn(feat):
         return {"fillColor": feat["properties"].get("_color", "#cccccc"),
                 "color": "#555", "weight": 0.8, "fillOpacity": 0.8}
+    def _fmt_compact(x: float) -> str:
+        x = float(x)
+        for unit in ["", "k", "M", "B", "T"]:
+            if abs(x) < 1000.0:
+                return f"{x:,.0f}{unit}"
+            x /= 1000.0
+        return f"{x:,.0f}P"
 
     m = make_base_map()
     folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
@@ -275,22 +304,44 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
         colormap.caption = legend_label
 
     colormap.add_to(m)
+    vmin = float(np.nanmin(vals))
+    vmed = float(np.nanmedian(vals))
+    vmax = float(np.nanmax(vals))
+    
+    labels_html = f"""
+    <div style="
+      position: fixed; top: 84px; right: 30px; z-index: 10000;
+      background: rgba(255,255,255,0.9); border: 1px solid #ddd;
+      padding: 2px 6px; border-radius: 4px; font-size: 10px;
+      font-family: 'Inter', sans-serif;">
+      {_fmt_compact(vmin)} &nbsp;|&nbsp; {_fmt_compact(vmed)} &nbsp;|&nbsp; {_fmt_compact(vmax)}
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(labels_html))
 
-    # Top-right placement + Inter font
     m.get_root().header.add_child(folium.Element("""
     <style>
-      .branca-colormap {
-        z-index: 9999;
-        position: fixed !important;
-        top: 30px; right: 30px; left: auto !important; bottom: auto !important;
-        font-family: 'Inter', sans-serif;
-      }
-      .branca-colormap .caption {
-        font-family: 'Inter', sans-serif;
-        font-size: 12px;
-      }
+      .branca-colormap { font-size: 10px; }
+      .branca-colormap .caption { font-size: 11px; }
     </style>
     """))
+
+    
+    # # Top-right placement + Inter font
+    # m.get_root().header.add_child(folium.Element("""
+    # <style>
+    #   .branca-colormap {
+    #     z-index: 9999;
+    #     position: fixed !important;
+    #     top: 30px; right: 30px; left: auto !important; bottom: auto !important;
+    #     font-family: 'Inter', sans-serif;
+    #   }
+    #   .branca-colormap .caption {
+    #     font-family: 'Inter', sans-serif;
+    #     font-size: 12px;
+    #   }
+    # </style>
+    # """))
     return m
 
 
@@ -383,7 +434,15 @@ with st.sidebar:
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the profile on the right.")
     if LOGO_PATH:
-        st.image(str(LOGO_PATH), use_container_width=True)
+        st.markdown("""
+        <div style="position: sticky; bottom: 0; padding-top: 24px;">
+          <img src='data:image/{};base64,{}' style="max-width:100%;"/>
+        </div>
+        """.format(
+            LOGO_PATH.suffix[1:],
+            __import__("base64").b64encode(open(LOGO_PATH,"rb").read()).decode("ascii")
+        ), unsafe_allow_html=True)
+
 
 # data
 daily = load_daily()
@@ -422,7 +481,7 @@ if "ignore_next_click" not in st.session_state:
     st.session_state.ignore_next_click = False
 
 # layout
-MAP_HEIGHT = 800
+MAP_HEIGHT = 900
 col_map, col_right = st.columns([3, 2], gap="large")
 
 with col_map:
@@ -510,7 +569,10 @@ with col_right:
            .configure_legend(labelFont="Inter", titleFont="Inter")
 
 
+      # ---------- CHART CARD WRAPPER (add these 2 lines around the render) ----------
+    st.markdown('<div class="card soft">', unsafe_allow_html=True)
     st.altair_chart(chart, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # County profile
     st.markdown("### County profile")
@@ -539,7 +601,11 @@ with col_right:
         return pd.DataFrame(items, columns=["Metric", "Value"])
 
     profile_df = county_profile(gdf_joined, st.session_state.selected_fips)
+    # ---------- PROFILE CARD WRAPPER (add these 2 lines around the render) ----------
+    st.markdown('<div class="card soft">', unsafe_allow_html=True)
     st.dataframe(profile_df, hide_index=True, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    # --------------------------------------------------------------------------------
 
 with st.expander("Metrics & diagnosis"):
     st.markdown(r"""
@@ -563,5 +629,6 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 

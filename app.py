@@ -9,6 +9,7 @@ import folium
 import altair as alt
 import re
 import branca.colormap as cm
+import base64
 
 # -------- Password gate --------
 def require_password():
@@ -29,8 +30,7 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# -------- Fonts (Inter via Bunny CDN; strong selector) --------
-# --- Global styles: fonts, icons, base UI, card variants ---
+# --- Global styles: fonts, icons, base UI, "cards" for chart & table ---
 st.markdown("""
 <!-- Inter (Bunny CDN) -->
 <link rel="preconnect" href="https://fonts.bunny.net">
@@ -63,27 +63,25 @@ st.markdown("""
   /* Tables a bit tighter */
   .stDataFrame table, .dataframe td, .dataframe th { font-size: 12px !important; }
 
-  /* Card variants (choose one per panel) */
-  .card { border-radius: 16px; padding: 16px; margin-bottom: 16px; }
-  .card.soft {
-    background: #fff;
+  /* ---- "Card" look applied directly to the chart & dataframe containers ---- */
+  /* Altair chart block */
+  div[data-testid="stVegaLiteChart"] {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 16px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
+    margin-bottom: 16px;
   }
-  .card.glass {
-    background: rgba(255,255,255,0.65);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.10);
-    border: 1px solid rgba(255,255,255,0.4);
-  }
-  .card.neu {
-    background: #f3f4f6;
-    box-shadow: 8px 8px 16px #d1d5db, -8px -8px 16px #ffffff;
+  /* DataFrame block */
+  div[data-testid="stDataFrame"] {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 8px 8px 2px 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
+    margin-bottom: 16px;
   }
 </style>
 """, unsafe_allow_html=True)
-
-
 
 # -------- Assets/paths --------
 LOGO_PATH = None
@@ -163,7 +161,6 @@ def make_base_map():
     style = st.secrets.get("MAPBOX_STYLE", "mapbox/streets-v11")
 
     if token:
-        # 256 tiles with @2x for HiDPI; no camelCase params
         folium.TileLayer(
             tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}@2x?access_token={token}",
             attr="Mapbox", name="Basemap", control=False, max_zoom=20
@@ -259,7 +256,13 @@ def _bin_and_color_series(vals, palette5, palette4):
     colors = (palette5 if n_bins >= 5 else palette4)[:n_bins]
     return bin_idx.astype(int), colors, edges, False
 
-
+def _fmt_compact(x: float) -> str:
+    x = float(x)
+    for unit in ["", "k", "M", "B", "T"]:
+        if abs(x) < 1000.0:
+            return f"{x:,.0f}{unit}"
+        x /= 1000.0
+    return f"{x:,.0f}P"
 
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     """Discrete (quantile/zero-aware) choropleth with a matching step colorbar."""
@@ -276,13 +279,6 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     def style_fn(feat):
         return {"fillColor": feat["properties"].get("_color", "#cccccc"),
                 "color": "#555", "weight": 0.8, "fillOpacity": 0.8}
-    def _fmt_compact(x: float) -> str:
-        x = float(x)
-        for unit in ["", "k", "M", "B", "T"]:
-            if abs(x) < 1000.0:
-                return f"{x:,.0f}{unit}"
-            x /= 1000.0
-        return f"{x:,.0f}P"
 
     m = make_base_map()
     folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
@@ -304,46 +300,32 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
         colormap.caption = legend_label
 
     colormap.add_to(m)
-    vmin = float(np.nanmin(vals))
-    vmed = float(np.nanmedian(vals))
-    vmax = float(np.nanmax(vals))
-    
+
+    # Compact 3-label readout (min | median | max) with small font
+    vmin_all = float(np.nanmin(vals))
+    vmed_all = float(np.nanmedian(vals))
+    vmax_all = float(np.nanmax(vals))
     labels_html = f"""
     <div style="
-      position: fixed; top: 84px; right: 30px; z-index: 10000;
-      background: rgba(255,255,255,0.9); border: 1px solid #ddd;
-      padding: 2px 6px; border-radius: 4px; font-size: 10px;
+      position: fixed; top: 88px; right: 30px; z-index: 10000;
+      background: rgba(255,255,255,0.92); border: 1px solid #ddd;
+      padding: 2px 6px; border-radius: 4px; font-size: 9px;
       font-family: 'Inter', sans-serif;">
-      {_fmt_compact(vmin)} &nbsp;|&nbsp; {_fmt_compact(vmed)} &nbsp;|&nbsp; {_fmt_compact(vmax)}
+      {_fmt_compact(vmin_all)} &nbsp;|&nbsp; {_fmt_compact(vmed_all)} &nbsp;|&nbsp; {_fmt_compact(vmax_all)}
     </div>
     """
     m.get_root().html.add_child(folium.Element(labels_html))
 
+    # Make the ruler smaller & hide default tick labels (we keep our 3-label strip)
     m.get_root().header.add_child(folium.Element("""
     <style>
-      .branca-colormap { font-size: 10px; }
-      .branca-colormap .caption { font-size: 11px; }
+      .branca-colormap { font-size: 9px; }
+      .branca-colormap .caption { font-size: 10px; }
+      .branca-colormap .tick text { display: none; }  /* hide crowded tick labels */
     </style>
     """))
 
-    
-    # # Top-right placement + Inter font
-    # m.get_root().header.add_child(folium.Element("""
-    # <style>
-    #   .branca-colormap {
-    #     z-index: 9999;
-    #     position: fixed !important;
-    #     top: 30px; right: 30px; left: auto !important; bottom: auto !important;
-    #     font-family: 'Inter', sans-serif;
-    #   }
-    #   .branca-colormap .caption {
-    #     font-family: 'Inter', sans-serif;
-    #     font-size: 12px;
-    #   }
-    # </style>
-    # """))
     return m
-
 
 def make_categorical_map(gdf_joined, category_col, palette=None):
     palette = palette or DIAG_PALETTE
@@ -433,16 +415,7 @@ with st.sidebar:
         "Map: choose metric (or diagnosis)", options=["Diagnosis"] + labels_numeric, index=0
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the profile on the right.")
-    if LOGO_PATH:
-        st.markdown("""
-        <div style="position: sticky; bottom: 0; padding-top: 24px;">
-          <img src='data:image/{};base64,{}' style="max-width:100%;"/>
-        </div>
-        """.format(
-            LOGO_PATH.suffix[1:],
-            __import__("base64").b64encode(open(LOGO_PATH,"rb").read()).decode("ascii")
-        ), unsafe_allow_html=True)
-
+    # (Removed the sidebar logo — we overlay it on the MAP bottom-left now)
 
 # data
 daily = load_daily()
@@ -481,7 +454,7 @@ if "ignore_next_click" not in st.session_state:
     st.session_state.ignore_next_click = False
 
 # layout
-MAP_HEIGHT = 900
+MAP_HEIGHT = 900  # adjust 880–920 to align with right panel height
 col_map, col_right = st.columns([3, 2], gap="large")
 
 with col_map:
@@ -491,12 +464,30 @@ with col_map:
         m = make_numeric_choropleth(
             gdf_joined, color_col=metric_label_to_key[map_metric_label], legend_label=map_metric_label
         )
+
     attach_tooltip_and_popup(m, gdf_joined)
     add_roadways_layer(m, road_gdf)
     add_truck_spots_layer(m, spots_gdf)
+
+    # --- LOCUS logo overlay at MAP bottom-left ---
+    if LOGO_PATH:
+        b64 = base64.b64encode(open(LOGO_PATH, "rb").read()).decode("ascii")
+        logo_html = f"""
+        <div style="
+          position: fixed; bottom: 16px; left: 16px; z-index: 10000;
+          background: rgba(255,255,255,0.85); border: 1px solid #ddd;
+          padding: 6px 8px; border-radius: 8px;">
+          <img src="data:image/{LOGO_PATH.suffix[1:]};base64,{b64}"
+               style="height: 28px; display: block;" />
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(logo_html))
+
     folium.LayerControl(collapsed=False).add_to(m)
-    map_state = st_folium(m, height=MAP_HEIGHT, use_container_width=True,
-                          returned_objects=["last_object_clicked_popup"])
+    map_state = st_folium(
+        m, height=MAP_HEIGHT, use_container_width=True,
+        returned_objects=["last_object_clicked_popup"]
+    )
 
 # pick up county clicks
 if map_state and map_state.get("last_object_clicked_popup") and not st.session_state.ignore_next_click:
@@ -523,10 +514,11 @@ with col_right:
 
         agg = sub.groupby("hour", as_index=False)[["des_demand", "undes_demand"]].sum()
         agg["supply"] = supply_const
-        long_df = agg.melt(id_vars="hour", value_vars=["des_demand", "undes_demand"],
-                           var_name="type", value_name="value").replace(
-            {"type": {"des_demand": "Designated", "undes_demand": "Undesignated"}}
-        )
+        long_df = agg.melt(
+            id_vars="hour",
+            value_vars=["des_demand", "undes_demand"],
+            var_name="type", value_name="value"
+        ).replace({"type": {"des_demand": "Designated", "undes_demand": "Undesignated"}})
         return title, long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "supply"]]
 
     title, bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
@@ -553,26 +545,22 @@ with col_right:
           .properties(height=320)
     )
 
-    # Yellow supply rule with friendly tooltip
+    # Yellow supply rule with friendly tooltip (thicker)
     supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
     rule_df = pd.DataFrame({"y": [supply_const], "label": [f"Supply {supply_const:,.0f}"]})
     rule = (
         alt.Chart(rule_df)
-          .mark_rule(color="#e8edb8", size=4)   # thicker line
+          .mark_rule(color="#e8edb8", size=4)
           .encode(y="y:Q", tooltip=alt.Tooltip("label:N", title=""))
     )
 
-
     chart = alt.layer(stacked, rule) \
-           .properties(padding={"bottom": 12}) \
-           .configure_axis(labelFont="Inter", titleFont="Inter") \
-           .configure_legend(labelFont="Inter", titleFont="Inter")
+             .properties(padding={"bottom": 12}) \
+             .configure_axis(labelFont="Inter", titleFont="Inter") \
+             .configure_legend(labelFont="Inter", titleFont="Inter")
 
-
-      # ---------- CHART CARD WRAPPER (add these 2 lines around the render) ----------
-    st.markdown('<div class="card soft">', unsafe_allow_html=True)
+    # (No HTML wrappers — the CSS above turns chart & dataframe blocks into "cards")
     st.altair_chart(chart, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # County profile
     st.markdown("### County profile")
@@ -601,11 +589,7 @@ with col_right:
         return pd.DataFrame(items, columns=["Metric", "Value"])
 
     profile_df = county_profile(gdf_joined, st.session_state.selected_fips)
-    # ---------- PROFILE CARD WRAPPER (add these 2 lines around the render) ----------
-    st.markdown('<div class="card soft">', unsafe_allow_html=True)
     st.dataframe(profile_df, hide_index=True, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    # --------------------------------------------------------------------------------
 
 with st.expander("Metrics & diagnosis"):
     st.markdown(r"""
@@ -629,6 +613,3 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
-
-
-

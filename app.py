@@ -82,7 +82,7 @@ st.markdown("""
     position: fixed; left: 14px; bottom: 12px; z-index: 10;
     background: transparent; border: none; padding: 0; border-radius: 0;
   }
-  #sidebar-brand img{ height: 40px; display:block; }
+  #sidebar-brand img{ height: 70px; display:block; }
 
   /* Leaflet tooltips font */
   .leaflet-tooltip { font-size:11px; opacity:0.85; font-family:'Inter',sans-serif; }
@@ -577,5 +577,6 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 

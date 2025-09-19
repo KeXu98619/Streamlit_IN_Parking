@@ -516,11 +516,15 @@ with col_right:
           .encode(y="y:Q", tooltip=alt.Tooltip("label:N", title=""))
     )
 
-    chart = (stacked + rule) \
-            .configure_axis(labelFont="Inter", titleFont="Inter") \
-            .configure_legend(labelFont="Inter", titleFont="Inter")
-
+    chart = (stacked + rule).properties(
+        padding={"left": 4, "right": 4, "top": 4, "bottom": 36}  # <- extra bottom room
+    ).configure_axis(
+        labelFont="Inter", titleFont="Inter", titleFontSize=11   # <- a bit smaller
+    ).configure_legend(
+        labelFont="Inter", titleFont="Inter"
+    )
     st.altair_chart(chart, use_container_width=True)
+
 
     # County profile
     st.markdown("### County profile")
@@ -573,4 +577,5 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 

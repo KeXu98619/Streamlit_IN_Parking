@@ -29,7 +29,7 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# --- Global styles: Inter font, protect icon fonts, card look, sidebar logo pin, legend ---
+# --- Global styles: Inter font, protect icon fonts, card look,  logo pin, legend ---
 st.markdown("""
 <!-- Inter (Google Fonts) -->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
@@ -79,11 +79,10 @@ st.markdown("""
   /* Pin brand logo bottom-left inside the sidebar */
   [data-testid="stSidebar"] { position: relative; }
   #sidebar-brand{
-    position: fixed; left: 16px; bottom: 16px; z-index: 10;
-    background: rgba(255,255,255,0.95); border: 1px solid #e5e7eb;
-    padding: 6px 8px; border-radius: 8px;
+    position: fixed; left: 14px; bottom: 12px; z-index: 10;
+    background: transparent; border: none; padding: 0; border-radius: 0;
   }
-  #sidebar-brand img{ height: 34px; display:block; }
+  #sidebar-brand img{ height: 40px; display:block; }
 
   /* Leaflet tooltips font */
   .leaflet-tooltip { font-size:11px; opacity:0.85; font-family:'Inter',sans-serif; }
@@ -103,6 +102,7 @@ st.markdown("""
 
 # -------- Assets/paths --------
 LOGO_PATH = None
+#prioritize and choose webp first
 for candidate in [Path("logo.webp"), Path("logo.png")]:
     if candidate.exists():
         LOGO_PATH = candidate
@@ -573,3 +573,4 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+

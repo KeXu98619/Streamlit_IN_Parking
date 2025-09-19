@@ -30,7 +30,7 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# --- Global styles: fonts, icons, base UI, "cards" for chart & table ---
+# --- Global styles: fonts, icons, base UI, "cards" for chart & table, sidebar logo anchor ---
 st.markdown("""
 <!-- Inter (Bunny CDN) -->
 <link rel="preconnect" href="https://fonts.bunny.net">
@@ -46,7 +46,6 @@ st.markdown("""
   html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stButton, .stCaption, .stDownloadButton, .stMetric {
     font-family: 'Inter', sans-serif !important;
   }
-
   /* Keep icons rendering as icons (prevents 'keyboard_double_arrow_right' text) */
   .material-icons {
     font-family: 'Material Icons' !important;
@@ -60,7 +59,7 @@ st.markdown("""
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   }
 
-  /* Tables a bit tighter */
+  /* Tighter table font */
   .stDataFrame table, .dataframe td, .dataframe th { font-size: 12px !important; }
 
   /* ---- "Card" look applied directly to the chart & dataframe containers ---- */
@@ -79,6 +78,30 @@ st.markdown("""
     padding: 8px 8px 2px 8px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
     margin-bottom: 16px;
+  }
+
+  /* Sidebar bottom-left logo anchor */
+  [data-testid="stSidebar"] { position: relative; }
+  #locus-side-logo {
+    position: absolute; left: 12px; bottom: 12px; z-index: 10;
+    background: rgba(255,255,255,0.9); border: 1px solid #ddd;
+    padding: 6px 8px; border-radius: 8px;
+  }
+  #locus-side-logo img { height: 28px; display: block; }
+
+  /* Colormap: pin top-right, shrink font, hide default tick labels */
+  .branca-colormap {
+    z-index: 9999;
+    position: fixed !important;
+    top: 30px; right: 30px; left: auto !important; bottom: auto !important;
+    font-family: 'Inter', sans-serif;
+    font-size: 9px;
+  }
+  .branca-colormap .caption { font-size: 10px; }
+  .branca-colormap .tick text,
+  .branca-colormap text {
+    display: none !important;  /* hide default numbers; we render our own strip */
+    font-size: 0 !important;
   }
 </style>
 """, unsafe_allow_html=True)
@@ -162,7 +185,7 @@ def make_base_map():
 
     if token:
         folium.TileLayer(
-            tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}@2x?access_token={token}",
+            tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/256/{'{z}'}/{'{x}'}/{'{y}'}@2x?access_token={token}",
             attr="Mapbox", name="Basemap", control=False, max_zoom=20
         ).add_to(m)
     else:
@@ -301,13 +324,13 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
 
     colormap.add_to(m)
 
-    # Compact 3-label readout (min | median | max) with small font
+    # Compact 3-label readout (min | median | max) directly under the ruler
     vmin_all = float(np.nanmin(vals))
     vmed_all = float(np.nanmedian(vals))
     vmax_all = float(np.nanmax(vals))
     labels_html = f"""
     <div style="
-      position: fixed; top: 88px; right: 30px; z-index: 10000;
+      position: fixed; top: 78px; right: 30px; z-index: 10000;
       background: rgba(255,255,255,0.92); border: 1px solid #ddd;
       padding: 2px 6px; border-radius: 4px; font-size: 9px;
       font-family: 'Inter', sans-serif;">
@@ -315,15 +338,6 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     </div>
     """
     m.get_root().html.add_child(folium.Element(labels_html))
-
-    # Make the ruler smaller & hide default tick labels (we keep our 3-label strip)
-    m.get_root().header.add_child(folium.Element("""
-    <style>
-      .branca-colormap { font-size: 9px; }
-      .branca-colormap .caption { font-size: 10px; }
-      .branca-colormap .tick text { display: none; }  /* hide crowded tick labels */
-    </style>
-    """))
 
     return m
 
@@ -415,7 +429,15 @@ with st.sidebar:
         "Map: choose metric (or diagnosis)", options=["Diagnosis"] + labels_numeric, index=0
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the profile on the right.")
-    # (Removed the sidebar logo — we overlay it on the MAP bottom-left now)
+
+    # Sidebar bottom-left LOCUS logo (absolute to sidebar box)
+    if LOGO_PATH:
+        ext = LOGO_PATH.suffix[1:]
+        b64 = base64.b64encode(open(LOGO_PATH, "rb").read()).decode("ascii")
+        st.markdown(
+            f"<div id='locus-side-logo'><img src='data:image/{ext};base64,{b64}'/></div>",
+            unsafe_allow_html=True
+        )
 
 # data
 daily = load_daily()
@@ -469,20 +491,6 @@ with col_map:
     add_roadways_layer(m, road_gdf)
     add_truck_spots_layer(m, spots_gdf)
 
-    # --- LOCUS logo overlay at MAP bottom-left ---
-    if LOGO_PATH:
-        b64 = base64.b64encode(open(LOGO_PATH, "rb").read()).decode("ascii")
-        logo_html = f"""
-        <div style="
-          position: fixed; bottom: 16px; left: 16px; z-index: 10000;
-          background: rgba(255,255,255,0.85); border: 1px solid #ddd;
-          padding: 6px 8px; border-radius: 8px;">
-          <img src="data:image/{LOGO_PATH.suffix[1:]};base64,{b64}"
-               style="height: 28px; display: block;" />
-        </div>
-        """
-        m.get_root().html.add_child(folium.Element(logo_html))
-
     folium.LayerControl(collapsed=False).add_to(m)
     map_state = st_folium(
         m, height=MAP_HEIGHT, use_container_width=True,
@@ -500,8 +508,7 @@ if st.session_state.ignore_next_click:
 fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
 with col_right:
-    st.markdown("### Hourly demand distribution")
-
+    # (Title moved inside the chart via Altair's title, so it's within the "card")
     def hourly_long(df_hourly, fips=None):
         if fips:
             sub = df_hourly[df_hourly["county"] == fips].copy()
@@ -522,7 +529,6 @@ with col_right:
         return title, long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "supply"]]
 
     title, bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
-    st.write(f"**{title}**")
 
     bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
 
@@ -555,11 +561,11 @@ with col_right:
     )
 
     chart = alt.layer(stacked, rule) \
-             .properties(padding={"bottom": 12}) \
+             .properties(padding={"bottom": 12}, title=title) \
+             .configure_title(font="Inter", fontSize=16, anchor="start", dy=-5) \
              .configure_axis(labelFont="Inter", titleFont="Inter") \
              .configure_legend(labelFont="Inter", titleFont="Inter")
 
-    # (No HTML wrappers — the CSS above turns chart & dataframe blocks into "cards")
     st.altair_chart(chart, use_container_width=True)
 
     # County profile

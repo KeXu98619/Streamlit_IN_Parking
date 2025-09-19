@@ -29,7 +29,7 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# --- Global styles: Inter font, protect icon fonts, card look,  logo pin, legend ---
+# --- Global styles: Inter font, protect icon fonts, card look, logo pin, legend ---
 st.markdown("""
 <!-- Inter (Google Fonts) -->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
@@ -76,7 +76,7 @@ st.markdown("""
     margin-bottom:16px;
   }
 
-  /* Pin brand logo bottom-left inside the sidebar */
+  /* Pin brand logo bottom-left inside the sidebar (no background) */
   [data-testid="stSidebar"] { position: relative; }
   #sidebar-brand{
     position: fixed; left: 14px; bottom: 12px; z-index: 10;
@@ -89,9 +89,10 @@ st.markdown("""
 
   /* Custom legend (bottom-right, small font) */
   .custom-legend {
-    position: fixed; right: 24px; bottom: 24px; z-index: 9999;
+    position: fixed; right: 24px; bottom: 24px; z-index: 10050;
     background: rgba(255,255,255,0.98); border: 1px solid #ddd;
     padding: 8px 10px; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 10px;
+    pointer-events: none;  /* don't block map controls */
   }
   .custom-legend .title{ font-weight:600; margin-bottom:4px; }
   .custom-legend .bar{ width: 240px; height: 10px; border-radius: 4px; }
@@ -102,7 +103,6 @@ st.markdown("""
 
 # -------- Assets/paths --------
 LOGO_PATH = None
-#prioritize and choose webp first
 for candidate in [Path("logo.webp"), Path("logo.png")]:
     if candidate.exists():
         LOGO_PATH = candidate
@@ -115,10 +115,10 @@ SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")
 ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")
 
 # Palettes
-PALETTE_5 = ["#e8edb8", "#bbe2c4", "#9bd4d0", "#7cc0db", "#61a1ca"]
-PALETTE_4 = ["#e8edb8", "#bbe2c4", "#7cc0db", "#61a1ca"]
+PALETTE_5 = ["#e8edb8", "#bbe2c4", "#9bd4d0", "#7cc0db", "#144fb5"]
+PALETTE_4 = ["#e8edb8", "#bbe2c4", "#7cc0db", "#144fb5"]
 DIAG_PALETTE = {
-    "High Stress":   "#61a1ca",
+    "High Stress":   "#144fb5",
     "Elevated":      "#7cc0db",
     "Typical/Other": "#bbe2c4",
     "No Supply":     "#e8edb8",
@@ -235,18 +235,13 @@ def _add_quartile_legend(m, colors, edges, title):
     - edges: array of tick positions (Q0..Q100; duplicates allowed)
     - We dedupe adjacent equal labels so 0,0 doesn't show twice.
     """
-    # Gradient from discrete colors
     gradient = ",".join(colors)
-    # Build labels from edges -> only unique-in-order display
     labels = []
     for i, v in enumerate(edges):
         fmt = _fmt_compact(float(v))
         if i == 0 or fmt != labels[-1]:  # dedupe adjacent equals
             labels.append(fmt)
-
-    # Build evenly spaced ticks matching the number of unique labels
     tick_html = "".join(f"<span>{t}</span>" for t in labels)
-
     html = f"""
     <div class="custom-legend">
       <div class="title">{title}</div>
@@ -296,7 +291,7 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     m = make_base_map()
     folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
 
-    # Custom quartile legend (bottom-right) with small labels
+    # Quartile legend at bottom-right (small, deduped)
     _add_quartile_legend(m, colors, edges, legend_label)
 
     return m
@@ -344,7 +339,9 @@ def attach_tooltip_and_popup(m, gdf_joined):
         highlight_function=lambda x: {"weight": 2, "color": "black"},
         tooltip=tooltip,
     )
-    folium.GeoJsonPopup(fields=["county_fips"]).add_to(gj)
+    # Show friendly name in popup (keeps FIPS too so your click parsing still works)
+    folium.GeoJsonPopup(fields=["county_name", "county_fips"],
+                        aliases=["County", "FIPS"]).add_to(gj)
     gj.add_to(m)
 
 def add_roadways_layer(m, road_gdf):
@@ -507,24 +504,29 @@ with col_right:
           .properties(height=320)
     )
 
-    # Yellow supply rule with friendly tooltip (thicker)
+    # Supply rule (with its own legend)
     supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
-    rule_df = pd.DataFrame({"y": [supply_const], "label": [f"Supply {supply_const:,.0f}"]})
-    rule = (
+    rule_df = pd.DataFrame({"y": [supply_const], "legend": ["Supply"], "label": [f"Supply {supply_const:,.0f}"]})
+    supply_rule = (
         alt.Chart(rule_df)
-          .mark_rule(color="#e8edb8", size=4)
-          .encode(y="y:Q", tooltip=alt.Tooltip("label:N", title=""))
+          .mark_rule(size=4)
+          .encode(
+              y="y:Q",
+              color=alt.Color("legend:N",
+                              scale=alt.Scale(domain=["Supply"], range=["#e8edb8"]),
+                              legend=alt.Legend(title="")),
+              tooltip=alt.Tooltip("label:N", title="")
+          )
     )
 
-    chart = (stacked + rule).properties(
-        padding={"left": 4, "right": 4, "top": 4, "bottom": 36}  # <- extra bottom room
+    chart = (stacked + supply_rule).properties(
+        padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
     ).configure_axis(
-        labelFont="Inter", titleFont="Inter", titleFontSize=11   # <- a bit smaller
+        labelFont="Inter", titleFont="Inter", titleFontSize=11
     ).configure_legend(
         labelFont="Inter", titleFont="Inter"
     )
     st.altair_chart(chart, use_container_width=True)
-
 
     # County profile
     st.markdown("### County profile")
@@ -577,6 +579,3 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
-
-
-

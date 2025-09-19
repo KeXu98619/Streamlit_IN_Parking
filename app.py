@@ -115,10 +115,10 @@ SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")
 ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")
 
 # Palettes
-PALETTE_5 = ["#e8edb8", "#bbe2c4", "#9bd4d0", "#7cc0db", "#144fb5"]
-PALETTE_4 = ["#e8edb8", "#bbe2c4", "#7cc0db", "#144fb5"]
+PALETTE_5 = ["#e8edb8", "#bbe2c4", "#9bd4d0", "#7cc0db", "#4e9dcf"]
+PALETTE_4 = ["#e8edb8", "#bbe2c4", "#7cc0db", "#4e9dcf"]
 DIAG_PALETTE = {
-    "High Stress":   "#144fb5",
+    "High Stress":   "#4e9dcf",
     "Elevated":      "#7cc0db",
     "Typical/Other": "#bbe2c4",
     "No Supply":     "#e8edb8",
@@ -231,22 +231,37 @@ def _fmt_compact(x: float) -> str:
 
 def _add_quartile_legend(m, colors, edges, title):
     """
-    Custom legend bottom-right with quartile labels.
-    - edges: array of tick positions (Q0..Q100; duplicates allowed)
-    - We dedupe adjacent equal labels so 0,0 doesn't show twice.
+    Inline-styled bottom-right legend with quartile labels.
+    - edges can include duplicates (e.g., many zeros) — we dedupe adjacent labels.
+    - colors should be len(edges)-1 after your binning.
     """
-    gradient = ",".join(colors)
+    def _fmt_compact(x: float) -> str:
+        x = float(x)
+        for unit in ["", "k", "M", "B", "T"]:
+            if abs(x) < 1000.0:
+                return f"{x:,.0f}{unit}"
+            x /= 1000.0
+        return f"{x:,.0f}P"
+
+    # Build deduped tick labels from edges
     labels = []
     for i, v in enumerate(edges):
-        fmt = _fmt_compact(float(v))
-        if i == 0 or fmt != labels[-1]:  # dedupe adjacent equals
-            labels.append(fmt)
-    tick_html = "".join(f"<span>{t}</span>" for t in labels)
+        lab = _fmt_compact(float(v))
+        if i == 0 or lab != labels[-1]:
+            labels.append(lab)
+
+    gradient = ",".join(colors)
+    ticks_html = "".join(f"<span style='font-size:9px;color:#111827'>{t}</span>" for t in labels)
+
     html = f"""
-    <div class="custom-legend">
-      <div class="title">{title}</div>
-      <div class="bar" style="background: linear-gradient(90deg, {gradient});"></div>
-      <div class="ticks">{tick_html}</div>
+    <div style="
+      position: fixed; right: 24px; bottom: 24px; z-index: 10050;
+      background: rgba(255,255,255,0.98); border: 1px solid #ddd;
+      padding: 8px 10px; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 10px;
+      pointer-events: none;">
+      <div style="font-weight:600; margin-bottom:4px;">{title}</div>
+      <div style="width: 240px; height: 10px; border-radius: 4px; background: linear-gradient(90deg, {gradient});"></div>
+      <div style="display:flex; justify-content:space-between; margin-top:4px;">{ticks_html}</div>
     </div>
     """
     m.get_root().html.add_child(folium.Element(html))
@@ -318,6 +333,7 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     return m
 
 def attach_tooltip_and_popup(m, gdf_joined):
+    # Tooltip (unchanged fields)
     fields = [
         ("County", "county_name"),
         ("FIPS", "county_fips"),
@@ -332,17 +348,28 @@ def attach_tooltip_and_popup(m, gdf_joined):
                "border: 1px solid #ccc; border-radius: 4px; padding: 6px;"
                "box-shadow: 0 1px 3px rgba(0,0,0,0.2);")
     )
+
+    # Build a popup field that shows only County Name visually, but contains hidden FIPS for click parsing
+    gdf = gdf_joined.copy()
+    gdf["popup_html"] = gdf["county_name"].astype(str) + \
+        " <span style='display:none;'>" + gdf["county_fips"].astype(str) + "</span>"
+
     gj = folium.GeoJson(
-        gdf_joined,
+        gdf,
         name="Counties",
         style_function=lambda _: {"fillOpacity": 0, "color": "#555", "weight": 0.8},
         highlight_function=lambda x: {"weight": 2, "color": "black"},
         tooltip=tooltip,
     )
-    # Show friendly name in popup (keeps FIPS too so your click parsing still works)
-    folium.GeoJsonPopup(fields=["county_name", "county_fips"],
-                        aliases=["County", "FIPS"]).add_to(gj)
+    # Show only the county name (FIPS is present but hidden)
+    folium.GeoJsonPopup(
+        fields=["popup_html"],
+        aliases=["County"],
+        parse_html=True,            # IMPORTANT: allow the hidden span to render/hide
+        labels=True,
+    ).add_to(gj)
     gj.add_to(m)
+
 
 def add_roadways_layer(m, road_gdf):
     if road_gdf is None or road_gdf.empty:
@@ -504,22 +531,25 @@ with col_right:
           .properties(height=320)
     )
 
-    # Supply rule (with its own legend)
+    # --- Supply rule (green) with its own legend, kept independent from bar colors ---
     supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
-    rule_df = pd.DataFrame({"y": [supply_const], "legend": ["Supply"], "label": [f"Supply {supply_const:,.0f}"]})
+    rule_df = pd.DataFrame({"y": [supply_const], "series": ["Supply"], "label": [f"Supply {supply_const:,.0f}"]})
+    
     supply_rule = (
         alt.Chart(rule_df)
           .mark_rule(size=4)
           .encode(
               y="y:Q",
-              color=alt.Color("legend:N",
+              color=alt.Color("series:N",
                               scale=alt.Scale(domain=["Supply"], range=["#e8edb8"]),
                               legend=alt.Legend(title="")),
               tooltip=alt.Tooltip("label:N", title="")
           )
     )
-
-    chart = (stacked + supply_rule).properties(
+    
+    chart = (stacked + supply_rule).resolve_scale(
+        color='independent'        # <-- keep the bar palette and the green rule separate
+    ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
     ).configure_axis(
         labelFont="Inter", titleFont="Inter", titleFontSize=11
@@ -527,6 +557,7 @@ with col_right:
         labelFont="Inter", titleFont="Inter"
     )
     st.altair_chart(chart, use_container_width=True)
+
 
     # County profile
     st.markdown("### County profile")
@@ -579,3 +610,4 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+

@@ -1,4 +1,4 @@
-# app.py — Indiana Truck Parking (finalized)
+# app.py — Indiana Truck Parking (finalized, legend + font + sidebar logo + title outside card)
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -30,11 +30,10 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# --- Global styles: fonts, icons, base UI, "cards" for chart & table, sidebar logo anchor ---
+# --- Global styles: Inter font (Google), icon fonts, chart/DataFrame cards, sidebar flex/footer ---
 st.markdown("""
-<!-- Inter (Bunny CDN) -->
-<link rel="preconnect" href="https://fonts.bunny.net">
-<link href="https://fonts.bunny.net/css?family=inter:400,600" rel="stylesheet" />
+<!-- Inter (Google Fonts) -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
 
 <!-- Material Icons (legacy) -->
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -42,10 +41,12 @@ st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
 
 <style>
-  /* Apply Inter broadly but do NOT clobber icon fonts */
-  html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stButton, .stCaption, .stDownloadButton, .stMetric {
+  /* Apply Inter broadly with high specificity */
+  html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame,
+  .stButton, .stCaption, .stDownloadButton, .stMetric, .stSidebar, .stSidebarContent {
     font-family: 'Inter', sans-serif !important;
   }
+
   /* Keep icons rendering as icons (prevents 'keyboard_double_arrow_right' text) */
   .material-icons {
     font-family: 'Material Icons' !important;
@@ -62,8 +63,7 @@ st.markdown("""
   /* Tighter table font */
   .stDataFrame table, .dataframe td, .dataframe th { font-size: 12px !important; }
 
-  /* ---- "Card" look applied directly to the chart & dataframe containers ---- */
-  /* Altair chart block */
+  /* "Card" look applied directly to the chart & dataframe containers */
   div[data-testid="stVegaLiteChart"] {
     background: #ffffff;
     border-radius: 16px;
@@ -71,7 +71,6 @@ st.markdown("""
     box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
     margin-bottom: 16px;
   }
-  /* DataFrame block */
   div[data-testid="stDataFrame"] {
     background: #ffffff;
     border-radius: 16px;
@@ -80,28 +79,27 @@ st.markdown("""
     margin-bottom: 16px;
   }
 
-  /* Sidebar bottom-left logo anchor */
-  [data-testid="stSidebar"] { position: relative; }
-  #locus-side-logo {
-    position: absolute; left: 12px; bottom: 12px; z-index: 10;
-    background: rgba(255,255,255,0.9); border: 1px solid #ddd;
-    padding: 6px 8px; border-radius: 8px;
+  /* Sidebar as a flex column so footer/logo can sit at the bottom cleanly */
+  [data-testid="stSidebar"] > div:first-child {
+    height: 100%;
+    display: flex; flex-direction: column;
   }
-  #locus-side-logo img { height: 28px; display: block; }
+  .sidebar-spacer { flex: 1 1 auto; }
+  .sidebar-footer {
+    padding: 8px 10px 12px 10px;
+  }
+  .sidebar-footer .logo-wrap {
+    background: rgba(255,255,255,0.95);
+    border: 1px solid #ddd;
+    padding: 6px 8px;
+    border-radius: 8px;
+    display: inline-block;
+  }
+  .sidebar-footer img { height: 28px; display: block; }
 
-  /* Colormap: pin top-right, shrink font, hide default tick labels */
+  /* Hide the default Branca colorbar entirely (we render our own ruler) */
   .branca-colormap {
-    z-index: 9999;
-    position: fixed !important;
-    top: 30px; right: 30px; left: auto !important; bottom: auto !important;
-    font-family: 'Inter', sans-serif;
-    font-size: 9px;
-  }
-  .branca-colormap .caption { font-size: 10px; }
-  .branca-colormap .tick text,
-  .branca-colormap text {
-    display: none !important;  /* hide default numbers; we render our own strip */
-    font-size: 0 !important;
+    display: none !important;
   }
 </style>
 """, unsafe_allow_html=True)
@@ -193,8 +191,7 @@ def make_base_map():
 
     # Inter font inside the map iframe for tooltips
     m.get_root().header.add_child(folium.Element("""
-    <link rel="preconnect" href="https://fonts.bunny.net">
-    <link href="https://fonts.bunny.net/css?family=inter:400,600" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
       .leaflet-tooltip { font-size: 11px; opacity: 0.85; font-family: 'Inter', sans-serif; }
     </style>
@@ -287,8 +284,33 @@ def _fmt_compact(x: float) -> str:
         x /= 1000.0
     return f"{x:,.0f}P"
 
+def _add_custom_legend(m, colors, vals):
+    """
+    Hide default colorbar (already done via CSS) and add our own compact
+    gradient 'ruler' with only min|median|max labels at top-right.
+    """
+    vmin_all = float(np.nanmin(vals))
+    vmed_all = float(np.nanmedian(vals))
+    vmax_all = float(np.nanmax(vals))
+
+    grad = "linear-gradient(to right, " + ", ".join(colors) + ")"
+    html = f"""
+    <div style="
+      position: fixed; top: 24px; right: 24px; z-index: 10000;
+      background: rgba(255,255,255,0.95); border: 1px solid #ddd;
+      padding: 8px 10px; border-radius: 8px; font-family: 'Inter', sans-serif;">
+      <div style="width: 260px; height: 12px; background: {grad}; border-radius: 4px;"></div>
+      <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px;">
+        <span>{_fmt_compact(vmin_all)}</span>
+        <span>{_fmt_compact(vmed_all)}</span>
+        <span>{_fmt_compact(vmax_all)}</span>
+      </div>
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(html))
+
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
-    """Discrete (quantile/zero-aware) choropleth with a matching step colorbar."""
+    """Discrete (quantile/zero-aware) choropleth with our custom legend."""
     gdf = gdf_joined.copy()
     vals = gdf[color_col].values
 
@@ -306,38 +328,23 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     m = make_base_map()
     folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
 
-    # Build a StepColormap: colors must be len(edges)-1
+    # (We still build a colormap to keep color logic consistent, but we hide it via CSS)
+    # Ensure the colorbar would be consistent with 'colors' and 'edges'
     vmin, vmax = float(edges[0]), float(edges[-1])
     needed = max(1, len(edges) - 1)
-    if len(colors) < needed:
-        colors = (colors + [colors[-1]])[:needed]
-    elif len(colors) > needed:
-        colors = colors[:needed]
+    use_colors = colors[:]
+    if len(use_colors) < needed:
+        use_colors = (use_colors + [use_colors[-1]])[:needed]
+    elif len(use_colors) > needed:
+        use_colors = use_colors[:needed]
 
-    # Constant field (vmin==vmax) → flat colorbar
     if vmin == vmax:
-        colormap = cm.LinearColormap(colors=[colors[0], colors[0]], vmin=vmin, vmax=vmax)
-        colormap.caption = f"{legend_label} (constant = {vmin:,.0f})"
+        cm.LinearColormap(colors=[use_colors[0], use_colors[0]], vmin=vmin, vmax=vmax).add_to(m)
     else:
-        colormap = cm.StepColormap(colors=colors, vmin=vmin, vmax=vmax, index=list(edges))
-        colormap.caption = legend_label
+        cm.StepColormap(colors=use_colors, vmin=vmin, vmax=vmax, index=list(edges)).add_to(m)
 
-    colormap.add_to(m)
-
-    # Compact 3-label readout (min | median | max) directly under the ruler
-    vmin_all = float(np.nanmin(vals))
-    vmed_all = float(np.nanmedian(vals))
-    vmax_all = float(np.nanmax(vals))
-    labels_html = f"""
-    <div style="
-      position: fixed; top: 78px; right: 30px; z-index: 10000;
-      background: rgba(255,255,255,0.92); border: 1px solid #ddd;
-      padding: 2px 6px; border-radius: 4px; font-size: 9px;
-      font-family: 'Inter', sans-serif;">
-      {_fmt_compact(vmin_all)} &nbsp;|&nbsp; {_fmt_compact(vmed_all)} &nbsp;|&nbsp; {_fmt_compact(vmax_all)}
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(labels_html))
+    # Add our custom 3-label legend ruler (min|median|max)
+    _add_custom_legend(m, use_colors, vals)
 
     return m
 
@@ -353,7 +360,7 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     folium.GeoJson(gdf_joined, style_function=style_fn, name="Diagnosis").add_to(m)
 
     legend_html = """
-    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc;">
+    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc; font-family: 'Inter', sans-serif; font-size: 12px;">
       <b>Diagnosis</b><br>
     """
     for label, color in palette.items():
@@ -430,12 +437,21 @@ with st.sidebar:
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the profile on the right.")
 
-    # Sidebar bottom-left LOCUS logo (absolute to sidebar box)
+    # Spacer pushes footer/logo to the bottom (thanks to flex column on sidebar)
+    st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
+
+    # Sidebar bottom-left LOCUS logo
     if LOGO_PATH:
         ext = LOGO_PATH.suffix[1:]
         b64 = base64.b64encode(open(LOGO_PATH, "rb").read()).decode("ascii")
         st.markdown(
-            f"<div id='locus-side-logo'><img src='data:image/{ext};base64,{b64}'/></div>",
+            f"""
+            <div class="sidebar-footer">
+              <div class="logo-wrap">
+                <img src="data:image/{ext};base64,{b64}" />
+              </div>
+            </div>
+            """,
             unsafe_allow_html=True
         )
 
@@ -491,7 +507,9 @@ with col_map:
     add_roadways_layer(m, road_gdf)
     add_truck_spots_layer(m, spots_gdf)
 
-    folium.LayerControl(collapsed=False).add_to(m)
+    # Move LayerControl to bottom-right to avoid legend overlap
+    folium.LayerControl(collapsed=False, position="bottomright").add_to(m)
+
     map_state = st_folium(
         m, height=MAP_HEIGHT, use_container_width=True,
         returned_objects=["last_object_clicked_popup"]
@@ -508,7 +526,11 @@ if st.session_state.ignore_next_click:
 fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
 with col_right:
-    # (Title moved inside the chart via Altair's title, so it's within the "card")
+    # Chart title OUTSIDE the card (per your request)
+    # We'll print "Hourly demand distribution — County Name"
+    current_title = f"Hourly demand distribution — **{fips_to_name.get(st.session_state.selected_fips, st.session_state.selected_fips)}**"
+    st.markdown(f"### {current_title}")
+
     def hourly_long(df_hourly, fips=None):
         if fips:
             sub = df_hourly[df_hourly["county"] == fips].copy()
@@ -526,96 +548,4 @@ with col_right:
             value_vars=["des_demand", "undes_demand"],
             var_name="type", value_name="value"
         ).replace({"type": {"des_demand": "Designated", "undes_demand": "Undesignated"}})
-        return title, long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "supply"]]
-
-    title, bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
-
-    bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
-
-    stacked = (
-        alt.Chart(bars_long)
-          .mark_bar()
-          .encode(
-              x=alt.X("hour:O", title="Hour of day",
-                      axis=alt.Axis(labelAngle=0, labelOverlap=True, titlePadding=12)),
-              y=alt.Y("sum(value):Q", title="Demand (truck-hours)",
-                      axis=alt.Axis(format=",.0f")),
-              color=alt.Color("type:N", title="",
-                              scale=alt.Scale(domain=["Designated","Undesignated"]),
-                              sort=["Designated","Undesignated"]),
-              order=alt.Order("type_order:Q"),
-              tooltip=[alt.Tooltip("hour:O", title="Hour"),
-                       alt.Tooltip("type:N", title="Type"),
-                       alt.Tooltip("sum(value):Q", title="Demand", format=",.0f")]
-          )
-          .properties(height=320)
-    )
-
-    # Yellow supply rule with friendly tooltip (thicker)
-    supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
-    rule_df = pd.DataFrame({"y": [supply_const], "label": [f"Supply {supply_const:,.0f}"]})
-    rule = (
-        alt.Chart(rule_df)
-          .mark_rule(color="#e8edb8", size=4)
-          .encode(y="y:Q", tooltip=alt.Tooltip("label:N", title=""))
-    )
-
-    chart = alt.layer(stacked, rule) \
-             .properties(padding={"bottom": 12}, title=title) \
-             .configure_title(font="Inter", fontSize=16, anchor="start", dy=-5) \
-             .configure_axis(labelFont="Inter", titleFont="Inter") \
-             .configure_legend(labelFont="Inter", titleFont="Inter")
-
-    st.altair_chart(chart, use_container_width=True)
-
-    # County profile
-    st.markdown("### County profile")
-    profile_fields = [
-        ("County", "county_name"),
-        ("FIPS", "county_fips"),
-        ("Diagnosis", "diagnosis"),
-        ("Max hourly designated demand", "max_hourly_des_demand_fmt"),
-        ("Max hourly undesignated demand", "max_hourly_undes_demand_fmt"),
-        ("Max hourly total demand", "max_hourly_total_demand_fmt"),
-        ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
-        ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
-        ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
-        ("Supply (hourly fixed)", "supply_fmt"),
-        ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
-        ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
-        ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
-        ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
-    ]
-
-    def county_profile(gdf, fips):
-        row = gdf[gdf["county_fips"] == fips].head(1)
-        if row.empty:
-            return pd.DataFrame({"Metric": [], "Value": []})
-        items = [(label, row.iloc[0].get(col, "")) for label, col in profile_fields]
-        return pd.DataFrame(items, columns=["Metric", "Value"])
-
-    profile_df = county_profile(gdf_joined, st.session_state.selected_fips)
-    st.dataframe(profile_df, hide_index=True, use_container_width=True)
-
-with st.expander("Metrics & diagnosis"):
-    st.markdown(r"""
-**Daily metrics (per county)** shown in tooltips & map selector:
-
-- **Max hourly designated demand** - highest designated count in any hour  
-- **Max hourly undesignated demand** - highest undesignated count in any hour  
-- **Max hourly total demand** - highest (designated + undesignated) in any hour  
-- **Acc. designated demand (truck-hours)** - sum of designated across 24 hours  
-- **Acc. undesignated demand (truck-hours)** - sum of undesignated across 24 hours  
-- **Acc. total demand (truck-hours)** - sum of (designated + undesignated) across 24 hours  
-- **Supply (hourly fixed)** - available designated stalls (capacity)  
-- **Max hourly designated deficit** - max(0, designated - supply) over 24 hours  
-- **Max hourly total deficit** - max(0, total - supply) over 24 hours  
-- **Acc. designated deficit (truck-hours)** - sum(max(0, designated - supply))  
-- **Acc. total deficit (truck-hours)** - sum(max(0, total - supply))
-
-**Diagnosis rules (per county):**
-- **High Stress** — Total demand hours ≥ 1000 and either (max hourly designated demand ÷ supply ≥ 0.9) or (undesigned share > 0.5).  
-- **Elevated** — Not High Stress, and total demand hours ≥ 300 and either (max hourly designated demand ÷ supply ≥ 0.7) or (undesigned share > 0.2).  
-- **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
-- **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
-""")
+        return title, long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "

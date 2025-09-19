@@ -1,4 +1,4 @@
-# app.py — Indiana Truck Parking (finalized)
+# app.py — Indiana Truck Parking (final)
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -29,51 +29,75 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# --- Global styles: fonts, icons, base UI, "cards" for chart & table, sidebar logo spacing ---
+# --- Global styles: Inter font, protect icon fonts, card look, sidebar logo pin, legend ---
 st.markdown("""
 <!-- Inter (Google Fonts) -->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-
-<!-- Material Icons (legacy) -->
+<!-- Material Icons / Symbols -->
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-<!-- Material Symbols (new) -->
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
 
 <style>
-  /* Apply Inter broadly but do NOT clobber icon fonts */
+  /* Apply Inter broadly (but NOT to generic <span>, to avoid clobbering icon spans) */
   html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stButton,
-  .stCaption, .stDownloadButton, .stMetric, .stRadio, .stSelectbox div, .stSlider,
-  .stCheckbox, .stNumberInput, .stText, .stHeader, h1, h2, h3, h4, h5, h6, p, span, label {
+  .stCaption, .stDownloadButton, .stMetric, .stRadio, .stSlider, .stCheckbox,
+  .stNumberInput, .stText, .stHeader, h1, h2, h3, h4, h5, h6, p, label, div {
     font-family: 'Inter', sans-serif !important;
   }
-  /* Keep icons rendering as icons (prevents 'keyboard_double_arrow_right' text) */
-  .material-icons { font-family: 'Material Icons' !important; }
-  .material-symbols-outlined { font-family: 'Material Symbols Outlined' !important;
-    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  /* Force any Material icon/symbol classes to render as icons (not text) */
+  .material-icons,
+  .material-icons-outlined,
+  .material-icons-round,
+  .material-icons-sharp,
+  .material-icons-two-tone,
+  .material-symbols-outlined,
+  [class^="material-"],
+  [class*=" material-"] {
+    font-family: 'Material Symbols Outlined','Material Icons' !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    font-style: normal; font-weight: normal; letter-spacing: normal;
+    text-transform: none; display: inline-block; white-space: nowrap;
+    line-height: 1; -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+  }
 
   /* Tighter table font */
   .stDataFrame table, .dataframe td, .dataframe th { font-size: 12px !important; }
 
-  /* ---- "Card" look applied directly to the chart & dataframe containers ---- */
-  /* Altair chart block */
-  div[data-testid="stVegaLiteChart"] {
-    background: #ffffff;
-    border-radius: 16px;
-    padding: 16px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
-    margin-bottom: 16px;
+  /* Card look for chart & dataframe containers */
+  div[data-testid="stVegaLiteChart"]{
+    background:#fff;border-radius:16px;padding:16px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.08),0 2px 6px rgba(0,0,0,0.06);
+    margin-bottom:16px;
   }
-  /* DataFrame block */
-  div[data-testid="stDataFrame"] {
-    background: #ffffff;
-    border-radius: 16px;
-    padding: 8px 8px 2px 8px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
-    margin-bottom: 16px;
+  div[data-testid="stDataFrame"]{
+    background:#fff;border-radius:16px;padding:8px 8px 2px 8px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.08),0 2px 6px rgba(0,0,0,0.06);
+    margin-bottom:16px;
   }
 
-  /* Sidebar: add bottom padding so a normal logo placed after Tip sits lower */
-  [data-testid="stSidebar"] .block-container { padding-bottom: 120px; }
+  /* Pin brand logo bottom-left inside the sidebar */
+  [data-testid="stSidebar"] { position: relative; }
+  #sidebar-brand{
+    position: fixed; left: 16px; bottom: 16px; z-index: 10;
+    background: rgba(255,255,255,0.95); border: 1px solid #e5e7eb;
+    padding: 6px 8px; border-radius: 8px;
+  }
+  #sidebar-brand img{ height: 34px; display:block; }
+
+  /* Leaflet tooltips font */
+  .leaflet-tooltip { font-size:11px; opacity:0.85; font-family:'Inter',sans-serif; }
+
+  /* Custom legend (bottom-right, small font) */
+  .custom-legend {
+    position: fixed; right: 24px; bottom: 24px; z-index: 9999;
+    background: rgba(255,255,255,0.98); border: 1px solid #ddd;
+    padding: 8px 10px; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 10px;
+  }
+  .custom-legend .title{ font-weight:600; margin-bottom:4px; }
+  .custom-legend .bar{ width: 240px; height: 10px; border-radius: 4px; }
+  .custom-legend .ticks{ display:flex; justify-content:space-between; margin-top:4px; }
+  .custom-legend .ticks span{ font-size:9px; color:#111827; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -147,7 +171,92 @@ def load_roadways(path: Path):
     except Exception as e:
         return None, f"Could not read roadways ({path.name}): {e}"
 
-# -------- Map helpers --------
+# -------- Utils --------
+def _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0)):
+    """Robust quantile edges; fallback to equal intervals when degenerate."""
+    vals = pd.Series(vals)
+    try:
+        edges = np.quantile(vals, q)
+        edges = np.round(edges, 6)
+        # Ensure monotonic non-decreasing
+        edges = np.maximum.accumulate(edges)
+        return edges
+    except Exception:
+        vmin, vmax = float(vals.min()), float(vals.max())
+        if vmin == vmax:
+            return np.array([vmin, vmax])
+        return np.linspace(vmin, vmax, len(q))
+
+def _bin_and_color_series(vals, palette5, palette4):
+    """
+    Returns: (bin_idx:int series, colors:list, edges:ndarray)
+    - Quantile binning (Q0,Q25,Q50,Q75,Q100)
+    - Forces max->top bin
+    - Colors matched to number of *intervals* (len(edges)-1)
+    """
+    vals = pd.to_numeric(pd.Series(vals), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0)
+    vmin, vmax = float(vals.min()), float(vals.max())
+    edges = _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0))
+
+    # If constant
+    if float(edges[0]) == float(edges[-1]):
+        bins = pd.Series(0, index=vals.index)
+        return bins.astype(int), [palette4[0], palette4[0]], np.array([vmin, vmax])
+
+    # Cut to quantile edges, allow duplicate edges but drop duplicate intervals
+    raw = pd.cut(vals, bins=np.unique(edges), include_lowest=True, labels=False, duplicates="drop").astype("float")
+    # Force the absolute max into the top interval
+    top = np.nanmax(raw)
+    raw[vals == vmax] = top
+    bins = raw.fillna(0)
+
+    uniq_bins = sorted(pd.Series(bins).unique())
+    n_intervals = max(1, len(uniq_bins))
+    colors = (palette5 if n_intervals >= 5 else palette4)[:n_intervals]
+
+    # If after dropping duplicates we have <2 edges, synthesize min/max
+    reduced_edges = np.unique(edges)
+    if len(reduced_edges) < 2:
+        reduced_edges = np.array([vmin, vmax])
+
+    return bins.astype(int), colors, reduced_edges
+
+def _fmt_compact(x: float) -> str:
+    x = float(x)
+    for unit in ["", "k", "M", "B", "T"]:
+        if abs(x) < 1000.0:
+            return f"{x:,.0f}{unit}"
+        x /= 1000.0
+    return f"{x:,.0f}P"
+
+def _add_quartile_legend(m, colors, edges, title):
+    """
+    Custom legend bottom-right with quartile labels.
+    - edges: array of tick positions (Q0..Q100; duplicates allowed)
+    - We dedupe adjacent equal labels so 0,0 doesn't show twice.
+    """
+    # Gradient from discrete colors
+    gradient = ",".join(colors)
+    # Build labels from edges -> only unique-in-order display
+    labels = []
+    for i, v in enumerate(edges):
+        fmt = _fmt_compact(float(v))
+        if i == 0 or fmt != labels[-1]:  # dedupe adjacent equals
+            labels.append(fmt)
+
+    # Build evenly spaced ticks matching the number of unique labels
+    tick_html = "".join(f"<span>{t}</span>" for t in labels)
+
+    html = f"""
+    <div class="custom-legend">
+      <div class="title">{title}</div>
+      <div class="bar" style="background: linear-gradient(90deg, {gradient});"></div>
+      <div class="ticks">{tick_html}</div>
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(html))
+
+# -------- Map builders --------
 def make_base_map():
     """Leaflet base map with Mapbox if present; hide basemap from layer control."""
     m = folium.Map(location=[39.9, -86.3], zoom_start=7, tiles=None)
@@ -162,120 +271,20 @@ def make_base_map():
     else:
         folium.TileLayer("cartodbpositron", name="Basemap", control=False).add_to(m)
 
-    # Inter font inside the map iframe for tooltips
+    # Inter inside the map iframe for tooltips
     m.get_root().header.add_child(folium.Element("""
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet" />
-    <style>
-      .leaflet-tooltip { font-size: 11px; opacity: 0.85; font-family: 'Inter', sans-serif; }
-    </style>
+    <style>.leaflet-tooltip{font-size:11px;opacity:.85;font-family:'Inter',sans-serif;}</style>
     """))
     return m
 
-def _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0)):
-    """Robust quantile edges; fallback to equal intervals when degenerate."""
-    vals = pd.Series(vals)
-    try:
-        edges = np.quantile(vals, q)
-        edges = np.unique(np.round(edges, 6))
-        if len(edges) < 2:
-            raise ValueError
-        return edges
-    except Exception:
-        vmin, vmax = float(vals.min()), float(vals.max())
-        if vmin == vmax:
-            return np.array([vmin, vmax])  # constant
-        return np.linspace(vmin, vmax, len(q))
-
-def _bin_and_color_series(vals, palette5, palette4):
-    """
-    Returns: bin_idx (int series), colors (list), edges (ndarray), zero_heavy (bool)
-    """
-    vals = pd.to_numeric(pd.Series(vals), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0)
-    vmin, vmax = float(vals.min()), float(vals.max())
-    zero_mask = vals.eq(0)
-    zero_share = zero_mask.mean()
-    pos_vals = vals[~zero_mask]
-
-    # Case A: zero-heavy & positives -> zero bin + quantiles over positives
-    if zero_share > 0.5 and not pos_vals.empty:
-        pos_edges = _quantile_edges(pos_vals, q=(0, 0.25, 0.5, 0.75, 1.0))
-        pos_edges = np.unique(pos_edges)
-        if len(pos_edges) < 2:
-            pos_edges = np.linspace(float(pos_vals.min()), float(pos_vals.max()), 5)
-
-        pos_bins = pd.cut(vals, bins=pos_edges, include_lowest=True, labels=False, duplicates="drop").astype("float")
-        bin_idx = pos_bins.add(1)  # shift
-        bin_idx[zero_mask] = 0
-
-        if not np.isnan(vmax):
-            top = np.nanmax(bin_idx)
-            bin_idx[vals == vmax] = top
-
-        bin_idx = bin_idx.fillna(0)
-
-        uniq_bins = sorted(pd.Series(bin_idx).unique())
-        n_bins = max(1, len(uniq_bins))
-        colors = (palette5 if n_bins >= 5 else palette4)[:n_bins]
-        edges = np.concatenate(([0.0], pos_edges))
-        return bin_idx.astype(int), colors, edges, True
-
-    # Case B: standard quantiles over all values
-    edges = _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0))
-    edges = np.unique(edges)
-    if len(edges) < 2:
-        bin_idx = pd.Series(0, index=vals.index)
-        colors = [palette4[0], palette4[0]]  # dummy
-        return bin_idx.astype(int), colors, np.array([vmin, vmax]), False
-
-    raw_bins = pd.cut(vals, bins=edges, include_lowest=True, labels=False, duplicates="drop").astype("float")
-    top = np.nanmax(raw_bins)
-    raw_bins[vals == vmax] = top
-    bin_idx = raw_bins.fillna(0)
-
-    uniq_bins = sorted(pd.Series(bin_idx).unique())
-    n_bins = max(1, len(uniq_bins))
-    colors = (palette5 if n_bins >= 5 else palette4)[:n_bins]
-    return bin_idx.astype(int), colors, edges, False
-
-def _fmt_compact(x: float) -> str:
-    x = float(x)
-    for unit in ["", "k", "M", "B", "T"]:
-        if abs(x) < 1000.0:
-            return f"{x:,.0f}{unit}"
-        x /= 1000.0
-    return f"{x:,.0f}P"
-
-def _add_custom_legend(m, colors, vmin, vmed, vmax, title):
-    """
-    Adds a custom gradient legend (top-right) with only three labels: min | median | max.
-    """
-    # Build gradient CSS
-    gradient = ",".join(colors)
-    legend_html = f"""
-    <div style="
-      position: fixed; top: 24px; right: 24px; z-index: 9999;
-      background: rgba(255,255,255,0.98); border: 1px solid #ddd;
-      padding: 8px 10px; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 10px;">
-      <div style="margin-bottom: 4px; font-weight: 600;">{title}</div>
-      <div style="width: 240px; height: 12px; background: linear-gradient(90deg, {gradient});
-                  border-radius: 4px;"></div>
-      <div style="display: flex; justify-content: space-between; margin-top: 4px;">
-        <span>{_fmt_compact(vmin)}</span>
-        <span>{_fmt_compact(vmed)}</span>
-        <span>{_fmt_compact(vmax)}</span>
-      </div>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(legend_html))
-
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
-    """Discrete (quantile/zero-aware) choropleth with a custom 3-label legend."""
     gdf = gdf_joined.copy()
     vals = gdf[color_col].values
 
-    bin_idx, colors, edges, zero_heavy = _bin_and_color_series(vals, PALETTE_5, PALETTE_4)
+    bin_idx, colors, edges = _bin_and_color_series(vals, PALETTE_5, PALETTE_4)
 
-    # Precompute hex color per feature
+    # map color per feature
     gdf["_bin"] = bin_idx
     color_map = {i: colors[i] for i in range(len(colors))}
     gdf["_color"] = gdf["_bin"].map(color_map).fillna(colors[-1] if len(colors) else "#cccccc")
@@ -287,12 +296,8 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     m = make_base_map()
     folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
 
-    # Create a simple linear gradient from the discrete colors for the legend bar
-    # (this is just for display; the map polygons use the same colors)
-    vmin_all = float(np.nanmin(vals))
-    vmed_all = float(np.nanmedian(vals))
-    vmax_all = float(np.nanmax(vals))
-    _add_custom_legend(m, colors, vmin_all, vmed_all, vmax_all, legend_label)
+    # Custom quartile legend (bottom-right) with small labels
+    _add_quartile_legend(m, colors, edges, legend_label)
 
     return m
 
@@ -308,11 +313,11 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     folium.GeoJson(gdf_joined, style_function=style_fn, name="Diagnosis").add_to(m)
 
     legend_html = """
-    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc;">
-      <b>Diagnosis</b><br>
+    <div style="position: fixed; bottom: 24px; left: 24px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ddd; border-radius:8px;">
+      <b style="font-family:'Inter',sans-serif;font-size:12px;">Diagnosis</b><br>
     """
     for label, color in palette.items():
-        legend_html += f'<span style="display:inline-block;width:12px;height:12px;background:{color};margin-right:6px;border:1px solid #666;"></span>{label}<br>'
+        legend_html += f'<span style="display:inline-block;width:12px;height:12px;background:{color};margin-right:6px;border:1px solid #666;"></span><span style="font-size:11px;font-family:\'Inter\',sans-serif;">{label}</span><br>'
     legend_html += "</div>"
     m.get_root().html.add_child(folium.Element(legend_html))
     return m
@@ -384,12 +389,12 @@ with st.sidebar:
         "Map: choose metric (or diagnosis)", options=["Diagnosis"] + labels_numeric, index=0
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the profile on the right.")
-    # Put the logo under the Tip, with spacing
+
+    # Logo pinned bottom-left of sidebar
     if LOGO_PATH:
-        st.markdown("<div style='height: 8px'></div>", unsafe_allow_html=True)
         ext = LOGO_PATH.suffix[1:]
         b64 = base64.b64encode(open(LOGO_PATH, "rb").read()).decode("ascii")
-        st.markdown(f"<img src='data:image/{ext};base64,{b64}' style='height:28px;'>", unsafe_allow_html=True)
+        st.markdown(f"<div id='sidebar-brand'><img src='data:image/{ext};base64,{b64}'/></div>", unsafe_allow_html=True)
 
 # data
 daily = load_daily()
@@ -428,7 +433,7 @@ if "ignore_next_click" not in st.session_state:
     st.session_state.ignore_next_click = False
 
 # layout
-MAP_HEIGHT = 900  # adjust 880–920 to align with right panel height
+MAP_HEIGHT = 900  # raise/lower to align with right panel
 col_map, col_right = st.columns([3, 2], gap="large")
 
 with col_map:
@@ -460,7 +465,6 @@ if st.session_state.ignore_next_click:
 fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
 with col_right:
-    # Title OUTSIDE card (above chart widget)
     title = fips_to_name.get(st.session_state.selected_fips, f"County {st.session_state.selected_fips}")
     st.markdown(f"### Hourly demand distribution — **{title}**")
 

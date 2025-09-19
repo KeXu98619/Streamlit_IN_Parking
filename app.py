@@ -1,4 +1,4 @@
-# app.py — Indiana Truck Parking (finalized, legend + font + sidebar logo + title outside card)
+# app.py — Indiana Truck Parking (finalized)
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -8,7 +8,6 @@ from streamlit_folium import st_folium
 import folium
 import altair as alt
 import re
-import branca.colormap as cm
 import base64
 
 # -------- Password gate --------
@@ -30,7 +29,7 @@ require_password()
 
 st.set_page_config(page_title="Indiana Truck Parking -- County Dashboard", layout="wide")
 
-# --- Global styles: Inter font (Google), icon fonts, chart/DataFrame cards, sidebar flex/footer ---
+# --- Global styles: fonts, icons, base UI, "cards" for chart & table, sidebar logo spacing ---
 st.markdown("""
 <!-- Inter (Google Fonts) -->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
@@ -41,29 +40,22 @@ st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
 
 <style>
-  /* Apply Inter broadly with high specificity */
-  html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame,
-  .stButton, .stCaption, .stDownloadButton, .stMetric, .stSidebar, .stSidebarContent {
+  /* Apply Inter broadly but do NOT clobber icon fonts */
+  html, body, .stApp, .stMarkdown, .stTextInput, .stSelectbox, .stDataFrame, .stButton,
+  .stCaption, .stDownloadButton, .stMetric, .stRadio, .stSelectbox div, .stSlider,
+  .stCheckbox, .stNumberInput, .stText, .stHeader, h1, h2, h3, h4, h5, h6, p, span, label {
     font-family: 'Inter', sans-serif !important;
   }
-
   /* Keep icons rendering as icons (prevents 'keyboard_double_arrow_right' text) */
-  .material-icons {
-    font-family: 'Material Icons' !important;
-    font-weight: normal; font-style: normal; font-size: 24px; line-height: 1;
-    letter-spacing: normal; text-transform: none; display: inline-block;
-    white-space: nowrap; word-wrap: normal; direction: ltr;
-    -webkit-font-feature-settings: 'liga'; -webkit-font-smoothing: antialiased;
-  }
-  .material-symbols-outlined {
-    font-family: 'Material Symbols Outlined' !important;
-    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-  }
+  .material-icons { font-family: 'Material Icons' !important; }
+  .material-symbols-outlined { font-family: 'Material Symbols Outlined' !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
 
   /* Tighter table font */
   .stDataFrame table, .dataframe td, .dataframe th { font-size: 12px !important; }
 
-  /* "Card" look applied directly to the chart & dataframe containers */
+  /* ---- "Card" look applied directly to the chart & dataframe containers ---- */
+  /* Altair chart block */
   div[data-testid="stVegaLiteChart"] {
     background: #ffffff;
     border-radius: 16px;
@@ -71,6 +63,7 @@ st.markdown("""
     box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.06);
     margin-bottom: 16px;
   }
+  /* DataFrame block */
   div[data-testid="stDataFrame"] {
     background: #ffffff;
     border-radius: 16px;
@@ -79,28 +72,8 @@ st.markdown("""
     margin-bottom: 16px;
   }
 
-  /* Sidebar as a flex column so footer/logo can sit at the bottom cleanly */
-  [data-testid="stSidebar"] > div:first-child {
-    height: 100%;
-    display: flex; flex-direction: column;
-  }
-  .sidebar-spacer { flex: 1 1 auto; }
-  .sidebar-footer {
-    padding: 8px 10px 12px 10px;
-  }
-  .sidebar-footer .logo-wrap {
-    background: rgba(255,255,255,0.95);
-    border: 1px solid #ddd;
-    padding: 6px 8px;
-    border-radius: 8px;
-    display: inline-block;
-  }
-  .sidebar-footer img { height: 28px; display: block; }
-
-  /* Hide the default Branca colorbar entirely (we render our own ruler) */
-  .branca-colormap {
-    display: none !important;
-  }
+  /* Sidebar: add bottom padding so a normal logo placed after Tip sits lower */
+  [data-testid="stSidebar"] .block-container { padding-bottom: 120px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -183,7 +156,7 @@ def make_base_map():
 
     if token:
         folium.TileLayer(
-            tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/256/{'{z}'}/{'{x}'}/{'{y}'}@2x?access_token={token}",
+            tiles=f"https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}@2x?access_token={token}",
             attr="Mapbox", name="Basemap", control=False, max_zoom=20
         ).add_to(m)
     else:
@@ -191,7 +164,7 @@ def make_base_map():
 
     # Inter font inside the map iframe for tooltips
     m.get_root().header.add_child(folium.Element("""
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet" />
     <style>
       .leaflet-tooltip { font-size: 11px; opacity: 0.85; font-family: 'Inter', sans-serif; }
     </style>
@@ -216,9 +189,6 @@ def _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0)):
 def _bin_and_color_series(vals, palette5, palette4):
     """
     Returns: bin_idx (int series), colors (list), edges (ndarray), zero_heavy (bool)
-    - Handles zero-heavy metrics by binning positives separately and giving zero its own bin.
-    - Forces max value into the top bin.
-    - Guarantees no NaN before returning.
     """
     vals = pd.to_numeric(pd.Series(vals), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0)
     vmin, vmax = float(vals.min()), float(vals.max())
@@ -226,7 +196,7 @@ def _bin_and_color_series(vals, palette5, palette4):
     zero_share = zero_mask.mean()
     pos_vals = vals[~zero_mask]
 
-    # Case A: zero-heavy & there ARE positives -> zero bin + quantiles over positives
+    # Case A: zero-heavy & positives -> zero bin + quantiles over positives
     if zero_share > 0.5 and not pos_vals.empty:
         pos_edges = _quantile_edges(pos_vals, q=(0, 0.25, 0.5, 0.75, 1.0))
         pos_edges = np.unique(pos_edges)
@@ -234,41 +204,32 @@ def _bin_and_color_series(vals, palette5, palette4):
             pos_edges = np.linspace(float(pos_vals.min()), float(pos_vals.max()), 5)
 
         pos_bins = pd.cut(vals, bins=pos_edges, include_lowest=True, labels=False, duplicates="drop").astype("float")
-
-        # 0 reserved for zeros; positives shift up by +1
-        bin_idx = pos_bins.add(1)
+        bin_idx = pos_bins.add(1)  # shift
         bin_idx[zero_mask] = 0
 
-        # force max into the top positive bin
         if not np.isnan(vmax):
             top = np.nanmax(bin_idx)
             bin_idx[vals == vmax] = top
 
-        bin_idx = bin_idx.fillna(0)  # final guard
+        bin_idx = bin_idx.fillna(0)
 
         uniq_bins = sorted(pd.Series(bin_idx).unique())
         n_bins = max(1, len(uniq_bins))
         colors = (palette5 if n_bins >= 5 else palette4)[:n_bins]
-
-        # Legend edges: [0] + positive edges
         edges = np.concatenate(([0.0], pos_edges))
         return bin_idx.astype(int), colors, edges, True
 
-    # Case B: not zero-heavy -> quantiles over all values
+    # Case B: standard quantiles over all values
     edges = _quantile_edges(vals, q=(0, 0.25, 0.5, 0.75, 1.0))
     edges = np.unique(edges)
     if len(edges) < 2:
-        # constant distribution
         bin_idx = pd.Series(0, index=vals.index)
-        colors = [palette4[0], palette4[0]]  # keep colormap happy (>= 2 colors)
+        colors = [palette4[0], palette4[0]]  # dummy
         return bin_idx.astype(int), colors, np.array([vmin, vmax]), False
 
     raw_bins = pd.cut(vals, bins=edges, include_lowest=True, labels=False, duplicates="drop").astype("float")
-
-    # force max into top bin
     top = np.nanmax(raw_bins)
     raw_bins[vals == vmax] = top
-
     bin_idx = raw_bins.fillna(0)
 
     uniq_bins = sorted(pd.Series(bin_idx).unique())
@@ -284,39 +245,37 @@ def _fmt_compact(x: float) -> str:
         x /= 1000.0
     return f"{x:,.0f}P"
 
-def _add_custom_legend(m, colors, vals):
+def _add_custom_legend(m, colors, vmin, vmed, vmax, title):
     """
-    Hide default colorbar (already done via CSS) and add our own compact
-    gradient 'ruler' with only min|median|max labels at top-right.
+    Adds a custom gradient legend (top-right) with only three labels: min | median | max.
     """
-    vmin_all = float(np.nanmin(vals))
-    vmed_all = float(np.nanmedian(vals))
-    vmax_all = float(np.nanmax(vals))
-
-    grad = "linear-gradient(to right, " + ", ".join(colors) + ")"
-    html = f"""
+    # Build gradient CSS
+    gradient = ",".join(colors)
+    legend_html = f"""
     <div style="
-      position: fixed; top: 24px; right: 24px; z-index: 10000;
-      background: rgba(255,255,255,0.95); border: 1px solid #ddd;
-      padding: 8px 10px; border-radius: 8px; font-family: 'Inter', sans-serif;">
-      <div style="width: 260px; height: 12px; background: {grad}; border-radius: 4px;"></div>
-      <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px;">
-        <span>{_fmt_compact(vmin_all)}</span>
-        <span>{_fmt_compact(vmed_all)}</span>
-        <span>{_fmt_compact(vmax_all)}</span>
+      position: fixed; top: 24px; right: 24px; z-index: 9999;
+      background: rgba(255,255,255,0.98); border: 1px solid #ddd;
+      padding: 8px 10px; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 10px;">
+      <div style="margin-bottom: 4px; font-weight: 600;">{title}</div>
+      <div style="width: 240px; height: 12px; background: linear-gradient(90deg, {gradient});
+                  border-radius: 4px;"></div>
+      <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+        <span>{_fmt_compact(vmin)}</span>
+        <span>{_fmt_compact(vmed)}</span>
+        <span>{_fmt_compact(vmax)}</span>
       </div>
     </div>
     """
-    m.get_root().html.add_child(folium.Element(html))
+    m.get_root().html.add_child(folium.Element(legend_html))
 
 def make_numeric_choropleth(gdf_joined, color_col, legend_label):
-    """Discrete (quantile/zero-aware) choropleth with our custom legend."""
+    """Discrete (quantile/zero-aware) choropleth with a custom 3-label legend."""
     gdf = gdf_joined.copy()
     vals = gdf[color_col].values
 
     bin_idx, colors, edges, zero_heavy = _bin_and_color_series(vals, PALETTE_5, PALETTE_4)
 
-    # Precompute hex color per feature (robust against JSON round-trip)
+    # Precompute hex color per feature
     gdf["_bin"] = bin_idx
     color_map = {i: colors[i] for i in range(len(colors))}
     gdf["_color"] = gdf["_bin"].map(color_map).fillna(colors[-1] if len(colors) else "#cccccc")
@@ -328,23 +287,12 @@ def make_numeric_choropleth(gdf_joined, color_col, legend_label):
     m = make_base_map()
     folium.GeoJson(gdf, style_function=style_fn, name=legend_label).add_to(m)
 
-    # (We still build a colormap to keep color logic consistent, but we hide it via CSS)
-    # Ensure the colorbar would be consistent with 'colors' and 'edges'
-    vmin, vmax = float(edges[0]), float(edges[-1])
-    needed = max(1, len(edges) - 1)
-    use_colors = colors[:]
-    if len(use_colors) < needed:
-        use_colors = (use_colors + [use_colors[-1]])[:needed]
-    elif len(use_colors) > needed:
-        use_colors = use_colors[:needed]
-
-    if vmin == vmax:
-        cm.LinearColormap(colors=[use_colors[0], use_colors[0]], vmin=vmin, vmax=vmax).add_to(m)
-    else:
-        cm.StepColormap(colors=use_colors, vmin=vmin, vmax=vmax, index=list(edges)).add_to(m)
-
-    # Add our custom 3-label legend ruler (min|median|max)
-    _add_custom_legend(m, use_colors, vals)
+    # Create a simple linear gradient from the discrete colors for the legend bar
+    # (this is just for display; the map polygons use the same colors)
+    vmin_all = float(np.nanmin(vals))
+    vmed_all = float(np.nanmedian(vals))
+    vmax_all = float(np.nanmax(vals))
+    _add_custom_legend(m, colors, vmin_all, vmed_all, vmax_all, legend_label)
 
     return m
 
@@ -360,7 +308,7 @@ def make_categorical_map(gdf_joined, category_col, palette=None):
     folium.GeoJson(gdf_joined, style_function=style_fn, name="Diagnosis").add_to(m)
 
     legend_html = """
-    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc; font-family: 'Inter', sans-serif; font-size: 12px;">
+    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 8px 10px; border: 1px solid #ccc;">
       <b>Diagnosis</b><br>
     """
     for label, color in palette.items():
@@ -436,24 +384,12 @@ with st.sidebar:
         "Map: choose metric (or diagnosis)", options=["Diagnosis"] + labels_numeric, index=0
     )
     st.caption("Tip: Click a county to update the stacked hourly chart and the profile on the right.")
-
-    # Spacer pushes footer/logo to the bottom (thanks to flex column on sidebar)
-    st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
-
-    # Sidebar bottom-left LOCUS logo
+    # Put the logo under the Tip, with spacing
     if LOGO_PATH:
+        st.markdown("<div style='height: 8px'></div>", unsafe_allow_html=True)
         ext = LOGO_PATH.suffix[1:]
         b64 = base64.b64encode(open(LOGO_PATH, "rb").read()).decode("ascii")
-        st.markdown(
-            f"""
-            <div class="sidebar-footer">
-              <div class="logo-wrap">
-                <img src="data:image/{ext};base64,{b64}" />
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        st.markdown(f"<img src='data:image/{ext};base64,{b64}' style='height:28px;'>", unsafe_allow_html=True)
 
 # data
 daily = load_daily()
@@ -507,9 +443,7 @@ with col_map:
     add_roadways_layer(m, road_gdf)
     add_truck_spots_layer(m, spots_gdf)
 
-    # Move LayerControl to bottom-right to avoid legend overlap
-    folium.LayerControl(collapsed=False, position="bottomright").add_to(m)
-
+    folium.LayerControl(collapsed=False).add_to(m)
     map_state = st_folium(
         m, height=MAP_HEIGHT, use_container_width=True,
         returned_objects=["last_object_clicked_popup"]
@@ -526,19 +460,16 @@ if st.session_state.ignore_next_click:
 fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
 with col_right:
-    # Chart title OUTSIDE the card (per your request)
-    # We'll print "Hourly demand distribution — County Name"
-    current_title = f"Hourly demand distribution — **{fips_to_name.get(st.session_state.selected_fips, st.session_state.selected_fips)}**"
-    st.markdown(f"### {current_title}")
+    # Title OUTSIDE card (above chart widget)
+    title = fips_to_name.get(st.session_state.selected_fips, f"County {st.session_state.selected_fips}")
+    st.markdown(f"### Hourly demand distribution — **{title}**")
 
     def hourly_long(df_hourly, fips=None):
         if fips:
             sub = df_hourly[df_hourly["county"] == fips].copy()
-            title = fips_to_name.get(fips, f"County {fips}")
             supply_const = float(daily.loc[daily["county_fips"] == fips, "supply"].fillna(0).max())
         else:
             sub = df_hourly.copy()
-            title = "Indiana (statewide)"
             supply_const = float(daily["supply"].fillna(0).sum())
 
         agg = sub.groupby("hour", as_index=False)[["des_demand", "undes_demand"]].sum()
@@ -548,4 +479,93 @@ with col_right:
             value_vars=["des_demand", "undes_demand"],
             var_name="type", value_name="value"
         ).replace({"type": {"des_demand": "Designated", "undes_demand": "Undesignated"}})
-        return title, long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "
+        return long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "supply"]]
+
+    bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
+    bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
+
+    stacked = (
+        alt.Chart(bars_long)
+          .mark_bar()
+          .encode(
+              x=alt.X("hour:O", title="Hour of day",
+                      axis=alt.Axis(labelAngle=0, labelOverlap=True, titlePadding=12)),
+              y=alt.Y("sum(value):Q", title="Demand (truck-hours)",
+                      axis=alt.Axis(format=",.0f")),
+              color=alt.Color("type:N", title="",
+                              scale=alt.Scale(domain=["Designated","Undesignated"]),
+                              sort=["Designated","Undesignated"]),
+              order=alt.Order("type_order:Q"),
+              tooltip=[alt.Tooltip("hour:O", title="Hour"),
+                       alt.Tooltip("type:N", title="Type"),
+                       alt.Tooltip("sum(value):Q", title="Demand", format=",.0f")]
+          )
+          .properties(height=320)
+    )
+
+    # Yellow supply rule with friendly tooltip (thicker)
+    supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
+    rule_df = pd.DataFrame({"y": [supply_const], "label": [f"Supply {supply_const:,.0f}"]})
+    rule = (
+        alt.Chart(rule_df)
+          .mark_rule(color="#e8edb8", size=4)
+          .encode(y="y:Q", tooltip=alt.Tooltip("label:N", title=""))
+    )
+
+    chart = (stacked + rule) \
+            .configure_axis(labelFont="Inter", titleFont="Inter") \
+            .configure_legend(labelFont="Inter", titleFont="Inter")
+
+    st.altair_chart(chart, use_container_width=True)
+
+    # County profile
+    st.markdown("### County profile")
+    profile_fields = [
+        ("County", "county_name"),
+        ("FIPS", "county_fips"),
+        ("Diagnosis", "diagnosis"),
+        ("Max hourly designated demand", "max_hourly_des_demand_fmt"),
+        ("Max hourly undesignated demand", "max_hourly_undes_demand_fmt"),
+        ("Max hourly total demand", "max_hourly_total_demand_fmt"),
+        ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
+        ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
+        ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
+        ("Supply (hourly fixed)", "supply_fmt"),
+        ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
+        ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
+        ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
+        ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
+    ]
+
+    def county_profile(gdf, fips):
+        row = gdf[gdf["county_fips"] == fips].head(1)
+        if row.empty:
+            return pd.DataFrame({"Metric": [], "Value": []})
+        items = [(label, row.iloc[0].get(col, "")) for label, col in profile_fields]
+        return pd.DataFrame(items, columns=["Metric", "Value"])
+
+    profile_df = county_profile(gdf_joined, st.session_state.selected_fips)
+    st.dataframe(profile_df, hide_index=True, use_container_width=True)
+
+with st.expander("Metrics & diagnosis"):
+    st.markdown(r"""
+**Daily metrics (per county)** shown in tooltips & map selector:
+
+- **Max hourly designated demand** - highest designated count in any hour  
+- **Max hourly undesignated demand** - highest undesignated count in any hour  
+- **Max hourly total demand** - highest (designated + undesignated) in any hour  
+- **Acc. designated demand (truck-hours)** - sum of designated across 24 hours  
+- **Acc. undesignated demand (truck-hours)** - sum of undesignated across 24 hours  
+- **Acc. total demand (truck-hours)** - sum of (designated + undesignated) across 24 hours  
+- **Supply (hourly fixed)** - available designated stalls (capacity)  
+- **Max hourly designated deficit** - max(0, designated - supply) over 24 hours  
+- **Max hourly total deficit** - max(0, total - supply) over 24 hours  
+- **Acc. designated deficit (truck-hours)** - sum(max(0, designated - supply))  
+- **Acc. total deficit (truck-hours)** - sum(max(0, total - supply))
+
+**Diagnosis rules (per county):**
+- **High Stress** — Total demand hours ≥ 1000 and either (max hourly designated demand ÷ supply ≥ 0.9) or (undesigned share > 0.5).  
+- **Elevated** — Not High Stress, and total demand hours ≥ 300 and either (max hourly designated demand ÷ supply ≥ 0.7) or (undesigned share > 0.2).  
+- **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
+- **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
+""")

@@ -303,12 +303,12 @@ def make_base_map():
             attr='Tiles &copy; Esri — Esri, DeLorme, NAVTEQ',
             name="Basemap", control=False, max_zoom=20
         ).add_to(m)
-        # # (Optional) Reference/labels layer on top:
-        # folium.TileLayer(
-        #     tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
-        #     attr='Tiles &copy; Esri',
-        #     name="Labels", control=True, overlay=True, max_zoom=20, opacity=1.0
-        # ).add_to(m)
+        # (Optional) Reference/labels layer on top:
+        folium.TileLayer(
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+            attr='Tiles &copy; Esri',
+            name="Labels", control=True, overlay=True, max_zoom=20, opacity=1.0
+        ).add_to(m)
 
 
 
@@ -643,6 +643,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

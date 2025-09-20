@@ -282,9 +282,9 @@ def make_base_map():
         #default version
         #folium.TileLayer("cartodbpositron", name="Basemap", control=False).add_to(m)
         #Carto Voyager (more detailed, includes major roads and highways):
-        folium.TileLayer("cartovoyager", name="Basemap", control=False).add_to(m)
-        # #OpenStreetMap default (shows most roads, including numbered highways):
-        # folium.TileLayer("openstreetmap", name="Basemap", control=False).add_to(m)
+        #folium.TileLayer("cartovoyager", name="Basemap", control=False).add_to(m)
+        #OpenStreetMap default (shows most roads, including numbered highways):
+        folium.TileLayer("openstreetmap", name="Basemap", control=False).add_to(m)
         # #Stamen Toner Lite (a bit bolder, but highway names are clear)
         # folium.TileLayer("stamentonerlite", name="Basemap", control=False).add_to(m)
 
@@ -619,6 +619,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

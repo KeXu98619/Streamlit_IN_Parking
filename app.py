@@ -107,10 +107,10 @@ for candidate in [Path("logo.webp"), Path("logo.png")]:
     if candidate.exists():
         LOGO_PATH = candidate
         break
-
-DAILY_CSV = Path("indiana_county_daily_ver2.csv")
+#currently it's ver3
+DAILY_CSV = Path("indiana_county_daily_ver3.csv")
 COUNTIES_GEOJSON = Path("indiana_counties_500k.geojson")
-RAW_HOURLY_CSV = Path("in_parking_demand_data_ver2.xlsx")
+RAW_HOURLY_CSV = Path("in_parking_demand_data_ver3.xlsx")
 SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")
 ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")
 
@@ -137,7 +137,7 @@ def load_counties():
 
 @st.cache_data(show_spinner=False)
 def load_hourly():
-    df = pd.read_excel(RAW_HOURLY_CSV, sheet_name='park_dem_calibrtd_by_hour')
+    df = pd.read_excel(RAW_HOURLY_CSV, sheet_name='parking_demand_data_calibr_ver2')
     drop_cols = [c for c in ["county_name", "total_expanded_daily_parking_demand"] if c in df.columns]
     if drop_cols:
         df = df.drop(columns=drop_cols)
@@ -610,4 +610,5 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 

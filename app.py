@@ -589,7 +589,7 @@ fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
 with col_right:
     title = fips_to_name.get(st.session_state.selected_fips, f"County {st.session_state.selected_fips}")
-    st.markdown(f"### Hourly demand distribution — **{title}**")
+    st.markdown(f"### Hourly demand vs. supply distribution — **{title}**")
 
     def hourly_long(df_hourly, fips=None):
         if fips:
@@ -659,6 +659,10 @@ with col_right:
                      + [LABEL_MED] * len(hourly_table)
                      + [LABEL_TOTAL] * len(hourly_table))
         })
+
+        # Ensure draw order: Total (bottom), Medium (middle), Small (top)
+        ORDER = {LABEL_TOTAL: 0, LABEL_MED: 1, LABEL_SMALL: 2}
+        supply_lines["order"] = supply_lines["type"].map(ORDER).astype(int)
     else:
         supply_lines = pd.DataFrame(columns=["hour","y","component","type"])
     
@@ -684,31 +688,40 @@ with col_right:
     )
     
     # Supply lines (greens, independent color scale)
-    greens = ["#c3fac6", "#69f89d", "#139c4a"]  # light → mid → dark
-    supply_chart = (
+    greens = ["#cbf7ce", "#76c292", "#0C5E2D"]  # light → mid → dark
+    line_colors = alt.Scale(
+        domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+        range=greens
+    )
+
+    supply_lines_chart = (
+    alt.Chart(supply_lines)
+      .mark_line(size=3.5, strokeCap='round', strokeJoin='round')
+      .encode(
+          x=alt.X("hour:O"),
+          y=alt.Y("y:Q"),
+          color=alt.Color("type:N", title="", sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL], scale=line_colors),
+          order=alt.Order("order:Q")   # draw small last (on top)
+          )
+    )
+    
+    # Invisible "ghost" points to massively increase hover target for tooltips
+    ghost_points = (
         alt.Chart(supply_lines)
-          .mark_line(size=2)
+          .mark_point(size=220, opacity=0)   # big, invisible hit area
           .encode(
               x=alt.X("hour:O"),
               y=alt.Y("y:Q"),
-              color=alt.Color(
-                  "type:N",
-                  title="",
-                  sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-                  scale=alt.Scale(
-                      domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-                      range=greens
-                  )
-              ),
               tooltip=[
                   alt.Tooltip("hour:O", title="Hour"),
                   alt.Tooltip("type:N", title="Type"),
                   alt.Tooltip("component:Q", title="Supply", format=",.0f")
-              ]
+              ],
+              color=alt.value("#000000")  # ignored visually due to opacity=0
           )
     )
     
-    chart = (stacked + supply_chart).resolve_scale(
+    chart = (stacked + supply_lines_chart + ghost_points).resolve_scale(
         color='independent'   # keep bar palette separate from supply lines
     ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
@@ -780,6 +793,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

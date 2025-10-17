@@ -440,23 +440,23 @@ def add_truck_spots_layer(m, spots_gdf):
         return "Unknown"
 
     categories = [
-        "Private - Small",
-        "Private - Medium",
-        "Private - Large",
-        "Public - Small",
-        "Public - Medium",
-        "Public - Large",
+        "Private-Small",
+        "Private-Medium",
+        "Private-Large",
+        "Public-Small",
+        "Public-Medium",
+        "Public-Large",
     ]
 
     # keep pink family like you wanted
     color_map = {
-        "Private - Small":  "#fde6f0",
-        "Private - Medium": "#f9cfe0",
-        "Private - Large":  "#f3a8c7",
-        "Public - Small":   "#ef82ad",
-        "Public - Medium":  "#e95b93",
-        "Public - Large":   "#e13678",
-        "Unknown":          "#8c8c8c",
+         "Private-Small":  "#fda6cc",
+        "Private-Medium": "#fc5396",
+        "Private-Large":  "#fd1174",
+        "Public-Small":   "#eeacfd",
+        "Public-Medium":  "#cd69e6",
+        "Public-Large":   "#9e2efa",
+        "Unknown":        "#8c8c8c",
     }
 
     gdf = spots_gdf.copy()
@@ -468,7 +468,7 @@ def add_truck_spots_layer(m, spots_gdf):
         subset = gdf[gdf["__ptype"] == cat]
         if subset.empty:
             continue
-        fg = folium.FeatureGroup(name=f"Spots — {cat}", show=(cat != "Unknown"))
+        fg = folium.FeatureGroup(name=f"ParkingSpots: {cat}", show=(cat != "Unknown"))
         for _, r in subset.iterrows():
             geom = r.geometry
             if geom is None or geom.geom_type != "Point":
@@ -640,7 +640,7 @@ with col_right:
     # Labels (legend + tooltip Type)
     LABEL_SMALL = "Small lots"
     LABEL_MED   = "Medium lots"
-    LABEL_TOTAL = "Total (all sizes)"  # cumulative all sizes
+    LABEL_TOTAL = "Large Lots"  # cumulative all sizes
     
     if not hourly_table.empty:
         s_small  = hourly_table["supply_small"].reset_index(drop=True)
@@ -684,7 +684,7 @@ with col_right:
     )
     
     # Supply lines (greens, independent color scale)
-    greens = ["#bfe7c2", "#59c27f", "#0f7a3a"]  # light → mid → dark
+    greens = ["#c3fac6", "#69f89d", "#139c4a"]  # light → mid → dark
     supply_chart = (
         alt.Chart(supply_lines)
           .mark_line(size=2)
@@ -703,7 +703,7 @@ with col_right:
               tooltip=[
                   alt.Tooltip("hour:O", title="Hour"),
                   alt.Tooltip("type:N", title="Type"),
-                  alt.Tooltip("component:Q", title="Capacity", format=",.0f")
+                  alt.Tooltip("component:Q", title="Supply", format=",.0f")
               ]
           )
     )
@@ -777,6 +777,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

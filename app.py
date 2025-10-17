@@ -729,28 +729,28 @@ with col_right:
     ).resolve_scale(color='independent')
 
     # Create a dummy layer only to restore the legend for supply lines
+    # Legend-only layer: no positional encodings, so it won't touch axes
     legend_layer = (
-        alt.Chart(pd.DataFrame({
-            "type": [LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-            "y": [0, 0, 0]
-        }))
-        .mark_line(size=3.5)
-        .encode(
-            y=alt.Y("y:Q", axis=None),
-            color=alt.Color(
-                "type:N",
-                title="",
-                sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-                scale=alt.Scale(
-                    domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-                    range=[greens[LABEL_SMALL], greens[LABEL_MED], greens[LABEL_TOTAL]]
-                )
-            )
-        )
+        alt.Chart(pd.DataFrame({"type": [LABEL_SMALL, LABEL_MED, LABEL_TOTAL]}))
+          .mark_point()
+          .encode(
+              color=alt.Color(
+                  "type:N",
+                  title="",
+                  sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+                  scale=alt.Scale(
+                      domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+                      range=[greens[0], greens[1], greens[2]] if isinstance(greens, list)
+                            else [greens[LABEL_SMALL], greens[LABEL_MED], greens[LABEL_TOTAL]]
+                  )
+              )
+          )
+          .properties(width=0, height=0)
     )
 
 
-    chart = (stacked + supply_chart+ legend_layer).resolve_scale(
+
+    chart = (stacked + supply_chart + legend_layer).resolve_scale(
         color='independent'
     ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
@@ -820,6 +820,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

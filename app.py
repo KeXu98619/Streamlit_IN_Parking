@@ -735,9 +735,9 @@ with col_right:
     ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
     ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
     ("Total Supply", "supply_fmt"),                      # renamed label
-    ("Supply (small size)", "supply_small_fmt"),         # new
-    ("Supply (medium size)", "supply_medium_fmt"),       # new
-    ("Supply (large size)", "supply_large_fmt"),         # new
+    ("Supply (small lots)", "supply_small_fmt"),         # new
+    ("Supply (medium lots)", "supply_medium_fmt"),       # new
+    ("Supply (large lots)", "supply_large_fmt"),         # new
     ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
     ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
     ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
@@ -765,7 +765,10 @@ with st.expander("Metrics & diagnosis"):
 - **Acc. designated demand (truck-hours)** - sum of designated across 24 hours  
 - **Acc. undesignated demand (truck-hours)** - sum of undesignated across 24 hours  
 - **Acc. total demand (truck-hours)** - sum of (designated + undesignated) across 24 hours  
-- **Supply (hourly fixed)** - available designated stalls (capacity)  
+- **Total Supply** - available designated stalls (capacity) 
+- **Supply (small lots)** - available truck parking lots in small size
+- **Supply (medium lots)** - available truck parking lots in medium size
+- **Supply (large lots)** - available truck parking lots in large size
 - **Max hourly designated deficit** - max(0, designated - supply) over 24 hours  
 - **Max hourly total deficit** - max(0, total - supply) over 24 hours  
 - **Acc. designated deficit (truck-hours)** - sum(max(0, designated - supply))  
@@ -777,6 +780,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

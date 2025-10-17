@@ -419,15 +419,26 @@ def add_truck_spots_layer(m, spots_gdf):
     if spots_gdf is None or spots_gdf.empty:
         return
 
-    # Normalize the category field name/value
-    def _cat(row):
-        # Try a few likely keys
-        for k in ["Parking Type", "parking_type", "Parking_Type", "parkingType"]:
+    import re
+
+    def _extract_raw(row):
+        for k in ["Parking Type", "parking_type", "Parking_Type", "parkingType", "ParkingType"]:
             if k in row and pd.notna(row[k]):
-                return str(row[k]).strip()
+                return row[k]
+        return None
+
+    def _canonical(pt_raw):
+        if pt_raw is None or (isinstance(pt_raw, float) and pd.isna(pt_raw)):
+            return "Unknown"
+        s = str(pt_raw).strip().lower()
+        m = re.search(r'(public|private).{0,10}?(small|medium|large)', s)
+        if m:
+            return f"{m.group(1).title()} - {m.group(2).title()}"
+        m = re.search(r'(small|medium|large).{0,10}?(public|private)', s)
+        if m:
+            return f"{m.group(2).title()} - {m.group(1).title()}"
         return "Unknown"
 
-    # Consistent label set/order (you can tweak label text if your file differs)
     categories = [
         "Private - Small",
         "Private - Medium",
@@ -437,53 +448,42 @@ def add_truck_spots_layer(m, spots_gdf):
         "Public - Large",
     ]
 
-    # Six pinks from light → dark
-    pink_map = {
-        "Private - Small":  "#fda6cc",
-        "Private - Medium": "#fc5396",
-        "Private - Large":  "#fd1174",
-        "Public - Small":   "#eeacfd",
-        "Public - Medium":  "#cd69e6",
-        "Public - Large":   "#9e2efa",
+    # keep pink family like you wanted
+    color_map = {
+        "Private - Small":  "#fde6f0",
+        "Private - Medium": "#f9cfe0",
+        "Private - Large":  "#f3a8c7",
+        "Public - Small":   "#ef82ad",
+        "Public - Medium":  "#e95b93",
+        "Public - Large":   "#e13678",
         "Unknown":          "#8c8c8c",
     }
 
     gdf = spots_gdf.copy()
-    gdf["__ptype"] = gdf.apply(_cat, axis=1)
-    fg = folium.FeatureGroup(name="Truck parking spots", show=True)
+    gdf["__ptype"] = gdf.apply(lambda r: _canonical(_extract_raw(r)), axis=1)
 
-    for _, r in gdf.iterrows():
-        geom = r.geometry
-        if geom is None or geom.geom_type != "Point":
+    # One FeatureGroup per category (sub-layer)
+    layer_by_cat = {}
+    for cat in categories + ["Unknown"]:
+        subset = gdf[gdf["__ptype"] == cat]
+        if subset.empty:
             continue
-        cat = r["__ptype"]
-        color = pink_map.get(cat, pink_map["Unknown"])
-        folium.CircleMarker(
-            location=[geom.y, geom.x],
-            radius=2.5,
-            weight=0,
-            fill=True,
-            fill_opacity=0.85,
-            color=color
-        ).add_to(fg)
-
-    fg.add_to(m)
-
-    # Simple legend (bottom-left) matching the six categories
-    legend_html = [
-        "<div style='position: fixed; bottom: 24px; left: 24px; z-index: 9999; "
-        "background: rgba(255,255,255,.98); padding: 8px 10px; border: 1px solid #ddd; border-radius:8px; "
-        "font-family: Inter, sans-serif; font-size: 11px;'>",
-        "<b style='font-size:12px;'>Parking Type</b><br>"
-    ]
-    for c in categories:
-        legend_html.append(
-            f"<span style='display:inline-block;width:12px;height:12px;background:{pink_map[c]};"
-            "margin-right:6px;border:1px solid #666;'></span>"
-            f"<span>{c}</span><br>"
-        )
-    legend_html.append("</div>")
-    m.get_root().html.add_child(folium.Element("".join(legend_html)))
+        fg = folium.FeatureGroup(name=f"Spots — {cat}", show=(cat != "Unknown"))
+        for _, r in subset.iterrows():
+            geom = r.geometry
+            if geom is None or geom.geom_type != "Point":
+                continue
+            folium.CircleMarker(
+                location=[geom.y, geom.x],
+                radius=2.5,
+                weight=0,
+                fill=True,
+                fill_opacity=0.85,
+                color=color_map.get(cat, "#8c8c8c")
+            ).add_to(fg)
+        fg.add_to(m)
+        layer_by_cat[cat] = fg
+    # (LayerControl already exists outside; no legend needed because layers are toggleable)
 
 
 # -------- UI --------
@@ -637,80 +637,79 @@ with col_right:
     )
 
     # --- Stacked supply lines (cumulative y; component tooltips) ---
-    # We keep the bars as-is, and overlay three lines:
-    #   Supply (small size):           y = small
-    #   Supply (medium size):          y = small + medium
-    #   Supply (large size) (total):   y = small + medium + large
-    # But the tooltip for each shows ONLY the component it represents: small / medium / large.
-
-    # Bars (unchanged)
-    stacked = (
-        alt.Chart(bars_long)
-        .mark_bar()
-        .encode(
-            x=alt.X("hour:O", title="Hour of day",
-                    axis=alt.Axis(labelAngle=0, labelOverlap=True, titlePadding=12)),
-            y=alt.Y("sum(value):Q", title="Demand (truck-hours)", axis=alt.Axis(format=",.0f")),
-            color=alt.Color("type:N", title="",
-                            scale=alt.Scale(domain=["Designated","Undesignated"]),
-                            sort=["Designated","Undesignated"]),
-            order=alt.Order("type_order:Q"),
-            tooltip=[
-                alt.Tooltip("hour:O", title="Hour"),
-                alt.Tooltip("type:N", title="Type"),
-                alt.Tooltip("sum(value):Q", title="Demand", format=",.0f")
-            ]
-        )
-        .properties(height=320)
-    )
-
-    # Build cumulative lines with component tooltips
+    # Labels (legend + tooltip Type)
+    LABEL_SMALL = "Small lots"
+    LABEL_MED   = "Medium lots"
+    LABEL_TOTAL = "Total (all sizes)"  # cumulative all sizes
+    
     if not hourly_table.empty:
         s_small  = hourly_table["supply_small"].reset_index(drop=True)
         s_medium = hourly_table["supply_medium"].reset_index(drop=True)
         s_large  = hourly_table["supply_large"].reset_index(drop=True)
-
+    
         cum_small  = s_small
         cum_medium = s_small + s_medium
-        cum_large  = s_small + s_medium + s_large
-
+        cum_total  = s_small + s_medium + s_large
+    
         supply_lines = pd.DataFrame({
-            "hour": list(hourly_table["hour"])*3,
-            # cumulative y for plotting
-            "y":    pd.concat([cum_small, cum_medium, cum_large], ignore_index=True),
-            # component values for tooltip
-            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),
-            # display labels in legend
-            "series": (["Supply (small size)"]*len(hourly_table)
-                    + ["Supply (medium size)"]*len(hourly_table)
-                    + ["Supply (large size) (total supply)"]*len(hourly_table))
+            "hour": list(hourly_table["hour"]) * 3,
+            "y":    pd.concat([cum_small, cum_medium, cum_total], ignore_index=True),  # plotted cumulative
+            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),   # tooltip component
+            "type": ([LABEL_SMALL] * len(hourly_table)
+                     + [LABEL_MED] * len(hourly_table)
+                     + [LABEL_TOTAL] * len(hourly_table))
         })
     else:
-        supply_lines = pd.DataFrame(columns=["hour","y","component","series"])
-
+        supply_lines = pd.DataFrame(columns=["hour","y","component","type"])
+    
+    # Demand bars (unchanged)
+    stacked = (
+        alt.Chart(bars_long)
+          .mark_bar()
+          .encode(
+              x=alt.X("hour:O", title="Hour of day",
+                      axis=alt.Axis(labelAngle=0, labelOverlap=True, titlePadding=12)),
+              y=alt.Y("sum(value):Q", title="Demand (truck-hours)", axis=alt.Axis(format=",.0f")),
+              color=alt.Color("type:N", title="",
+                              scale=alt.Scale(domain=["Designated","Undesignated"]),
+                              sort=["Designated","Undesignated"]),
+              order=alt.Order("type_order:Q"),
+              tooltip=[
+                  alt.Tooltip("hour:O", title="Hour"),
+                  alt.Tooltip("type:N", title="Type"),
+                  alt.Tooltip("sum(value):Q", title="Demand", format=",.0f")
+              ]
+          )
+          .properties(height=320)
+    )
+    
+    # Supply lines (greens, independent color scale)
+    greens = ["#bfe7c2", "#59c27f", "#0f7a3a"]  # light → mid → dark
     supply_chart = (
         alt.Chart(supply_lines)
-        .mark_line(size=2)
-        .encode(
-            x=alt.X("hour:O"),
-            y=alt.Y("y:Q"),
-            color=alt.Color(
-                "series:N",
-                title="",
-                sort=["Supply (small size)",
-                        "Supply (medium size)",
-                        "Supply (large size) (total supply)"]
-            ),
-            tooltip=[
-                alt.Tooltip("hour:O", title="Hour"),
-                alt.Tooltip("series:N", title=""),
-                alt.Tooltip("component:Q", title="Supply", format=",.0f")
-            ]
-        )
+          .mark_line(size=2)
+          .encode(
+              x=alt.X("hour:O"),
+              y=alt.Y("y:Q"),
+              color=alt.Color(
+                  "type:N",
+                  title="",
+                  sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+                  scale=alt.Scale(
+                      domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+                      range=greens
+                  )
+              ),
+              tooltip=[
+                  alt.Tooltip("hour:O", title="Hour"),
+                  alt.Tooltip("type:N", title="Type"),
+                  alt.Tooltip("component:Q", title="Capacity", format=",.0f")
+              ]
+          )
     )
-
+    
     chart = (stacked + supply_chart).resolve_scale(
-        color='independent'   # keep bar colors separate from supply line colors
+        color='independent'   # keep bar palette separate from supply lines
     ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
     ).configure_axis(
@@ -718,7 +717,7 @@ with col_right:
     ).configure_legend(
         labelFont="Inter", titleFont="Inter"
     )
-
+    
     st.altair_chart(chart, use_container_width=True)
 
 
@@ -778,6 +777,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

@@ -107,11 +107,11 @@ for candidate in [Path("logo.webp"), Path("logo.png")]:
     if candidate.exists():
         LOGO_PATH = candidate
         break
-#currently it's ver3
-DAILY_CSV = Path("indiana_county_daily_ver3.csv")
+#currently it's ver4
+DAILY_CSV = Path("indiana_county_daily_ver4.csv")
 COUNTIES_GEOJSON = Path("indiana_counties_500k.geojson")
-RAW_HOURLY_CSV = Path("in_parking_demand_data_ver3.xlsx")
-SPOTS_GEOJSON = Path("IN_Truck_Spots.geojson")
+RAW_HOURLY_CSV = Path("in_parking_demand_data_ver4.xlsx")
+SPOTS_GEOJSON = Path("IN_Truck_Spots_v2.geojson")
 ROADWAYS_GEOJSON = Path("in_roadway_map_layer.geojson")
 
 # Palettes
@@ -137,15 +137,31 @@ def load_counties():
 
 @st.cache_data(show_spinner=False)
 def load_hourly():
-    df = pd.read_excel(RAW_HOURLY_CSV, sheet_name='parking_demand_data_calibr_ver2')
-    drop_cols = [c for c in ["county_name", "total_expanded_daily_parking_demand"] if c in df.columns]
-    if drop_cols:
-        df = df.drop(columns=drop_cols)
-    df.columns = ["county", "hour", "des_demand", "undes_demand", "supply"]
+    df = pd.read_excel(RAW_HOURLY_CSV, sheet_name = 'parking_demand_data_2024_calibr')
+    for size in ["small", "medium", "large"]:
+        df[f"supply_{size}"] = df[f"truck_parking_spaces : private - {size}"] + df[f"truck_parking_spaces : public - {size}"]
+    print(df.columns)
+    df = df.drop(columns = {"county_name", "total_expanded_daily_parking_demand", 'truck_parking_lots: total',
+       'truck_parking_lots : private - large',
+       'truck_parking_lots : private - medium',
+       'truck_parking_lots : private - small',
+       'truck_parking_lots : public - large',
+       'truck_parking_lots : public - medium',
+       'truck_parking_lots : public - small', 
+       'truck_parking_spaces : private - large',
+       'truck_parking_spaces : private - medium',
+       'truck_parking_spaces : private - small',
+       'truck_parking_spaces : public - large',
+       'truck_parking_spaces : public - medium',
+       'truck_parking_spaces : public - small'
+})
+    
+    df.columns = ["county","hour","des_demand", "undes_demand", "supply","supply_small","supply_medium","supply_large"]
     df.columns = [c.strip().lower() for c in df.columns]
+    # normalize types
     df["county"] = df["county"].astype(str).str.zfill(5)
     df["hour"] = df["hour"].astype(int)
-    for c in ["des_demand", "undes_demand", "supply"]:
+    for c in ["des_demand", "undes_demand", "supply","supply_small","supply_medium","supply_large"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     return df
 
@@ -402,13 +418,72 @@ def add_roadways_layer(m, road_gdf):
 def add_truck_spots_layer(m, spots_gdf):
     if spots_gdf is None or spots_gdf.empty:
         return
+
+    # Normalize the category field name/value
+    def _cat(row):
+        # Try a few likely keys
+        for k in ["Parking Type", "parking_type", "Parking_Type", "parkingType"]:
+            if k in row and pd.notna(row[k]):
+                return str(row[k]).strip()
+        return "Unknown"
+
+    # Consistent label set/order (you can tweak label text if your file differs)
+    categories = [
+        "Private - Small",
+        "Private - Medium",
+        "Private - Large",
+        "Public - Small",
+        "Public - Medium",
+        "Public - Large",
+    ]
+
+    # Six pinks from light → dark
+    pink_map = {
+        "Private - Small":  "#fda6cc",
+        "Private - Medium": "#fc5396",
+        "Private - Large":  "#fd1174",
+        "Public - Small":   "#eeacfd",
+        "Public - Medium":  "#cd69e6",
+        "Public - Large":   "#9e2efa",
+    }
+
+    gdf = spots_gdf.copy()
+    gdf["__ptype"] = gdf.apply(_cat, axis=1)
     fg = folium.FeatureGroup(name="Truck parking spots", show=True)
-    for _, r in spots_gdf.iterrows():
+
+    for _, r in gdf.iterrows():
         geom = r.geometry
-        if geom and geom.geom_type == "Point":
-            folium.CircleMarker(location=[geom.y, geom.x], radius=2.5, weight=0,
-                                fill=True, fill_opacity=0.8).add_to(fg)
+        if geom is None or geom.geom_type != "Point":
+            continue
+        cat = r["__ptype"]
+        color = pink_map.get(cat, pink_map["Unknown"])
+        folium.CircleMarker(
+            location=[geom.y, geom.x],
+            radius=2.5,
+            weight=0,
+            fill=True,
+            fill_opacity=0.85,
+            color=color
+        ).add_to(fg)
+
     fg.add_to(m)
+
+    # Simple legend (bottom-left) matching the six categories
+    legend_html = [
+        "<div style='position: fixed; bottom: 24px; left: 24px; z-index: 9999; "
+        "background: rgba(255,255,255,.98); padding: 8px 10px; border: 1px solid #ddd; border-radius:8px; "
+        "font-family: Inter, sans-serif; font-size: 11px;'>",
+        "<b style='font-size:12px;'>Parking Type</b><br>"
+    ]
+    for c in categories:
+        legend_html.append(
+            f"<span style='display:inline-block;width:12px;height:12px;background:{pink_map[c]};"
+            "margin-right:6px;border:1px solid #666;'></span>"
+            f"<span>{c}</span><br>"
+        )
+    legend_html.append("</div>")
+    m.get_root().html.add_child(folium.Element("".join(legend_html)))
+
 
 # -------- UI --------
 st.title("Indiana Truck Parking — County Dashboard")
@@ -461,7 +536,10 @@ fmt_targets = [
     "supply",
     "max_hourly_des_deficit", "max_hourly_total_deficit",
     "acc_des_deficit", "acc_total_deficit",
+    # NEW:
+    "supply_small", "supply_medium", "supply_large"
 ]
+
 for col in fmt_targets:
     fmt_col = f"{col}_fmt"
     gdf_joined[fmt_col] = gdf_joined.get(col, 0).round(0).astype(int)
@@ -515,19 +593,25 @@ with col_right:
     def hourly_long(df_hourly, fips=None):
         if fips:
             sub = df_hourly[df_hourly["county"] == fips].copy()
-            supply_const = float(daily.loc[daily["county_fips"] == fips, "supply"].fillna(0).max())
         else:
             sub = df_hourly.copy()
-            supply_const = float(daily["supply"].fillna(0).sum())
 
-        agg = sub.groupby("hour", as_index=False)[["des_demand", "undes_demand"]].sum()
-        agg["supply"] = supply_const
+        # Aggregate per hour
+        agg = sub.groupby("hour", as_index=False)[
+            ["des_demand", "undes_demand", "supply_small", "supply_medium", "supply_large"]
+        ].sum()
+
+        # Total supply = small + medium + large (per hour)
+        agg["supply_total"] = agg["supply_small"] + agg["supply_medium"] + agg["supply_large"]
+
         long_df = agg.melt(
             id_vars="hour",
             value_vars=["des_demand", "undes_demand"],
             var_name="type", value_name="value"
         ).replace({"type": {"des_demand": "Designated", "undes_demand": "Undesignated"}})
-        return long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand", "supply"]]
+
+        return long_df.sort_values("hour"), agg[["hour", "des_demand", "undes_demand",
+                                                "supply_small", "supply_medium", "supply_large", "supply_total"]]
 
     bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
     bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
@@ -551,24 +635,81 @@ with col_right:
           .properties(height=320)
     )
 
-    # --- Supply rule (green) with its own legend, kept independent from bar colors ---
-    supply_const = float(hourly_table["supply"].iloc[0]) if not hourly_table.empty else 0.0
-    rule_df = pd.DataFrame({"y": [supply_const], "series": ["Supply"], "label": [f"Supply {supply_const:,.0f}"]})
-    
-    supply_rule = (
-        alt.Chart(rule_df)
-          .mark_rule(size=4)
-          .encode(
-              y="y:Q",
-              color=alt.Color("series:N",
-                              scale=alt.Scale(domain=["Supply"], range=["#e8edb8"]),
-                              legend=alt.Legend(title="")),
-              tooltip=alt.Tooltip("label:N", title="")
-          )
+    # --- Stacked supply lines (cumulative y; component tooltips) ---
+    # We keep the bars as-is, and overlay three lines:
+    #   Supply (small size):           y = small
+    #   Supply (medium size):          y = small + medium
+    #   Supply (large size) (total):   y = small + medium + large
+    # But the tooltip for each shows ONLY the component it represents: small / medium / large.
+
+    # Bars (unchanged)
+    stacked = (
+        alt.Chart(bars_long)
+        .mark_bar()
+        .encode(
+            x=alt.X("hour:O", title="Hour of day",
+                    axis=alt.Axis(labelAngle=0, labelOverlap=True, titlePadding=12)),
+            y=alt.Y("sum(value):Q", title="Demand (truck-hours)", axis=alt.Axis(format=",.0f")),
+            color=alt.Color("type:N", title="",
+                            scale=alt.Scale(domain=["Designated","Undesignated"]),
+                            sort=["Designated","Undesignated"]),
+            order=alt.Order("type_order:Q"),
+            tooltip=[
+                alt.Tooltip("hour:O", title="Hour"),
+                alt.Tooltip("type:N", title="Type"),
+                alt.Tooltip("sum(value):Q", title="Demand", format=",.0f")
+            ]
+        )
+        .properties(height=320)
     )
-    
-    chart = (stacked + supply_rule).resolve_scale(
-        color='independent'        # <-- keep the bar palette and the green rule separate
+
+    # Build cumulative lines with component tooltips
+    if not hourly_table.empty:
+        s_small  = hourly_table["supply_small"].reset_index(drop=True)
+        s_medium = hourly_table["supply_medium"].reset_index(drop=True)
+        s_large  = hourly_table["supply_large"].reset_index(drop=True)
+
+        cum_small  = s_small
+        cum_medium = s_small + s_medium
+        cum_large  = s_small + s_medium + s_large
+
+        supply_lines = pd.DataFrame({
+            "hour": list(hourly_table["hour"])*3,
+            # cumulative y for plotting
+            "y":    pd.concat([cum_small, cum_medium, cum_large], ignore_index=True),
+            # component values for tooltip
+            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),
+            # display labels in legend
+            "series": (["Supply (small size)"]*len(hourly_table)
+                    + ["Supply (medium size)"]*len(hourly_table)
+                    + ["Supply (large size) (total supply)"]*len(hourly_table))
+        })
+    else:
+        supply_lines = pd.DataFrame(columns=["hour","y","component","series"])
+
+    supply_chart = (
+        alt.Chart(supply_lines)
+        .mark_line(size=2)
+        .encode(
+            x=alt.X("hour:O"),
+            y=alt.Y("y:Q"),
+            color=alt.Color(
+                "series:N",
+                title="",
+                sort=["Supply (small size)",
+                        "Supply (medium size)",
+                        "Supply (large size) (total supply)"]
+            ),
+            tooltip=[
+                alt.Tooltip("hour:O", title="Hour"),
+                alt.Tooltip("series:N", title=""),
+                alt.Tooltip("component:Q", title="Supply", format=",.0f")
+            ]
+        )
+    )
+
+    chart = (stacked + supply_chart).resolve_scale(
+        color='independent'   # keep bar colors separate from supply line colors
     ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
     ).configure_axis(
@@ -576,27 +717,33 @@ with col_right:
     ).configure_legend(
         labelFont="Inter", titleFont="Inter"
     )
+
     st.altair_chart(chart, use_container_width=True)
+
 
 
     # County profile
     st.markdown("### County profile")
     profile_fields = [
-        ("County", "county_name"),
-        ("FIPS", "county_fips"),
-        ("Diagnosis", "diagnosis"),
-        ("Max hourly designated demand", "max_hourly_des_demand_fmt"),
-        ("Max hourly undesignated demand", "max_hourly_undes_demand_fmt"),
-        ("Max hourly total demand", "max_hourly_total_demand_fmt"),
-        ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
-        ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
-        ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
-        ("Supply (hourly fixed)", "supply_fmt"),
-        ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
-        ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
-        ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
-        ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
-    ]
+    ("County", "county_name"),
+    ("FIPS", "county_fips"),
+    ("Diagnosis", "diagnosis"),
+    ("Max hourly designated demand", "max_hourly_des_demand_fmt"),
+    ("Max hourly undesignated demand", "max_hourly_undes_demand_fmt"),
+    ("Max hourly total demand", "max_hourly_total_demand_fmt"),
+    ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
+    ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
+    ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
+    ("Total Supply", "supply_fmt"),                      # renamed label
+    ("Supply (small size)", "supply_small_fmt"),         # new
+    ("Supply (medium size)", "supply_medium_fmt"),       # new
+    ("Supply (large size)", "supply_large_fmt"),         # new
+    ("Max hourly designated deficit", "max_hourly_des_deficit_fmt"),
+    ("Max hourly total deficit", "max_hourly_total_deficit_fmt"),
+    ("Acc. designated deficit (truck-hrs)", "acc_des_deficit_fmt"),
+    ("Acc. total deficit (truck-hrs)", "acc_total_deficit_fmt"),
+]
+
 
     def county_profile(gdf, fips):
         row = gdf[gdf["county_fips"] == fips].head(1)

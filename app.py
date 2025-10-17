@@ -729,10 +729,10 @@ with col_right:
     ).resolve_scale(color='independent')
 
     # Create a dummy layer only to restore the legend for supply lines
-    # Legend-only layer: no positional encodings, so it won't touch axes
+    # Legend-only layer (no x/y, no width/height) — restores legend without affecting axes
     legend_layer = (
         alt.Chart(pd.DataFrame({"type": [LABEL_SMALL, LABEL_MED, LABEL_TOTAL]}))
-          .mark_point()
+          .mark_point(opacity=0.001)  # nearly invisible; legend still renders
           .encode(
               color=alt.Color(
                   "type:N",
@@ -740,13 +740,12 @@ with col_right:
                   sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
                   scale=alt.Scale(
                       domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-                      range=[greens[0], greens[1], greens[2]] if isinstance(greens, list)
-                            else [greens[LABEL_SMALL], greens[LABEL_MED], greens[LABEL_TOTAL]]
+                      range=[greens[LABEL_SMALL], greens[LABEL_MED], greens[LABEL_TOTAL]]
                   )
               )
           )
-          .properties(width=0, height=0)
     )
+
 
 
 
@@ -759,6 +758,9 @@ with col_right:
     ).configure_legend(
         labelFont="Inter", titleFont="Inter"
     )
+    
+    st.altair_chart(chart, use_container_width=True)
+
     
     st.altair_chart(chart, use_container_width=True)
 
@@ -820,6 +822,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

@@ -445,6 +445,7 @@ def add_truck_spots_layer(m, spots_gdf):
         "Public - Small":   "#eeacfd",
         "Public - Medium":  "#cd69e6",
         "Public - Large":   "#9e2efa",
+        "Unknown":          "#8c8c8c",
     }
 
     gdf = spots_gdf.copy()
@@ -777,6 +778,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

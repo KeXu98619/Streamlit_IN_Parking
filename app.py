@@ -662,9 +662,9 @@ with col_right:
         supply_lines = pd.DataFrame(columns=["hour","y","component","type"])
     
     greens = {
-        LABEL_SMALL: "#cbf7ce",   # light
+        LABEL_SMALL: "#0C5E2D",   # dark 
         LABEL_MED:   "#76c292",   # mid
-        LABEL_TOTAL: "#0C5E2D",   # dark
+        LABEL_TOTAL: "#cbf7ce",   # light
     }
     
     # Split per series to control paint order (Total -> Medium -> Small)
@@ -727,8 +727,30 @@ with col_right:
         line_layer(sl_med,   LABEL_MED)   + ghost_points_layer(sl_med,   LABEL_MED)   +
         line_layer(sl_small, LABEL_SMALL) + ghost_points_layer(sl_small, LABEL_SMALL)
     ).resolve_scale(color='independent')
-    
-    chart = (stacked + supply_chart).resolve_scale(
+
+    # Create a dummy layer only to restore the legend for supply lines
+    legend_layer = (
+        alt.Chart(pd.DataFrame({
+            "type": [LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+            "y": [0, 0, 0]
+        }))
+        .mark_line(size=3.5)
+        .encode(
+            y=alt.Y("y:Q", axis=None),
+            color=alt.Color(
+                "type:N",
+                title="",
+                sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+                scale=alt.Scale(
+                    domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+                    range=[greens[LABEL_SMALL], greens[LABEL_MED], greens[LABEL_TOTAL]]
+                )
+            )
+        )
+    )
+
+
+    chart = (stacked + supply_chart+ legend_layer).resolve_scale(
         color='independent'
     ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
@@ -798,6 +820,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

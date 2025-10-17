@@ -617,97 +617,14 @@ with col_right:
     bars_long, hourly_table = hourly_long(hourly, st.session_state.selected_fips)
     bars_long["type_order"] = bars_long["type"].map({"Designated": 0, "Undesignated": 1})
 
+    # --- Bars (unchanged except y-axis title = "Trucks") ---
     stacked = (
         alt.Chart(bars_long)
           .mark_bar()
           .encode(
               x=alt.X("hour:O", title="Hour of day",
                       axis=alt.Axis(labelAngle=0, labelOverlap=True, titlePadding=12)),
-              y=alt.Y("sum(value):Q", title="Demand (truck-hours)",
-                      axis=alt.Axis(format=",.0f")),
-              color=alt.Color("type:N", title="",
-                              scale=alt.Scale(domain=["Designated","Undesignated"]),
-                              sort=["Designated","Undesignated"]),
-              order=alt.Order("type_order:Q"),
-              tooltip=[alt.Tooltip("hour:O", title="Hour"),
-                       alt.Tooltip("type:N", title="Type"),
-                       alt.Tooltip("sum(value):Q", title="Demand", format=",.0f")]
-          )
-          .properties(height=320)
-    )
-
-   # --- Stacked supply lines (separate layers so Small is always on top) ---
-    LABEL_SMALL = "Small lots"
-    LABEL_MED   = "Medium lots"
-    LABEL_TOTAL = "Large Lots"  # (you labeled this as cumulative; keep if you like)
-    
-    if not hourly_table.empty:
-        s_small  = hourly_table["supply_small"].reset_index(drop=True)
-        s_medium = hourly_table["supply_medium"].reset_index(drop=True)
-        s_large  = hourly_table["supply_large"].reset_index(drop=True)
-    
-        cum_small  = s_small
-        cum_medium = s_small + s_medium
-        cum_total  = s_small + s_medium + s_large
-    
-        supply_lines = pd.DataFrame({
-            "hour": list(hourly_table["hour"]) * 3,
-            "y":    pd.concat([cum_small, cum_medium, cum_total], ignore_index=True),
-            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),
-            "type": ([LABEL_SMALL] * len(hourly_table)
-                     + [LABEL_MED] * len(hourly_table)
-                     + [LABEL_TOTAL] * len(hourly_table))
-        })
-    else:
-        supply_lines = pd.DataFrame(columns=["hour","y","component","type"])
-    
-    greens = {
-        LABEL_SMALL: "#0C5E2D",   # dark 
-        LABEL_MED:   "#76c292",   # mid
-        LABEL_TOTAL: "#cbf7ce",   # light
-    }
-    
-    # Split per series to control paint order (Total -> Medium -> Small)
-    sl_total = supply_lines[supply_lines["type"] == LABEL_TOTAL]
-    sl_med   = supply_lines[supply_lines["type"] == LABEL_MED]
-    sl_small = supply_lines[supply_lines["type"] == LABEL_SMALL]
-    
-    def line_layer(df, label):
-        return (
-            alt.Chart(df)
-              .mark_line(size=3.5, strokeCap='round', strokeJoin='round')
-              .encode(
-                  x=alt.X("hour:O"),
-                  y=alt.Y("y:Q"),
-                  color=alt.value(greens[label])
-              )
-        )
-    
-    def ghost_points_layer(df, label):
-        # Large invisible hit-area so it’s easy to hover even on overlaps
-        return (
-            alt.Chart(df)
-              .mark_point(size=260, opacity=0)
-              .encode(
-                  x=alt.X("hour:O"),
-                  y=alt.Y("y:Q"),
-                  tooltip=[
-                      alt.Tooltip("hour:O", title="Hour"),
-                      alt.Tooltip("type:N", title="Type"),
-                      alt.Tooltip("component:Q", title="Supply", format=",.0f"),
-                  ],
-                  color=alt.value(greens[label])  # ignored visually (opacity=0)
-              )
-        )
-    
-    # Demand bars (unchanged)
-    stacked = (
-        alt.Chart(bars_long)
-          .mark_bar()
-          .encode(
-              x=alt.X("hour:O", title="Hour of day",
-                      axis=alt.Axis(labelAngle=0, labelOverlap=True, titlePadding=12)),
-              y=alt.Y("sum(value):Q", title="Demand (truck-hours)", axis=alt.Axis(format=",.0f")),
+              y=alt.Y("sum(value):Q", title="Trucks", axis=alt.Axis(format=",.0f")),
               color=alt.Color("type:N", title="",
                               scale=alt.Scale(domain=["Designated","Undesignated"]),
                               sort=["Designated","Undesignated"]),
@@ -721,35 +638,58 @@ with col_right:
           .properties(height=320)
     )
     
-    # Paint order: TOTAL (bottom), then MEDIUM, then SMALL on top
+    # --- Stacked supply lines (single layer so default legend shows) ---
+    LABEL_SMALL = "Small lots"
+    LABEL_MED   = "Medium lots"
+    LABEL_LARGE = "Large lots"  # shown in legend; plotted as total (all sizes)
+    
+    if not hourly_table.empty:
+        s_small  = hourly_table["supply_small"].reset_index(drop=True)
+        s_medium = hourly_table["supply_medium"].reset_index(drop=True)
+        s_large  = hourly_table["supply_large"].reset_index(drop=True)
+    
+        # cumulative for plotting (so heights are small, small+medium, total)
+        cum_small  = s_small
+        cum_medium = s_small + s_medium
+        cum_total  = s_small + s_medium + s_large
+    
+        supply_lines = pd.DataFrame({
+            "hour": list(hourly_table["hour"]) * 3,
+            "y":    pd.concat([cum_small, cum_medium, cum_total], ignore_index=True),   # plotted cumulative
+            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),    # tooltip component
+            "type": ([LABEL_SMALL] * len(hourly_table)
+                     + [LABEL_MED]   * len(hourly_table)
+                     + [LABEL_LARGE] * len(hourly_table))
+        })
+    else:
+        supply_lines = pd.DataFrame(columns=["hour","y","component","type"])
+    
+    # subtle green palette for supply
+    greens = ["#cbf7ce", "#76c292", "#0C5E2D"]  # small, medium, large(total)
+    
     supply_chart = (
-        line_layer(sl_total, LABEL_TOTAL) + ghost_points_layer(sl_total, LABEL_TOTAL) +
-        line_layer(sl_med,   LABEL_MED)   + ghost_points_layer(sl_med,   LABEL_MED)   +
-        line_layer(sl_small, LABEL_SMALL) + ghost_points_layer(sl_small, LABEL_SMALL)
-    ).resolve_scale(color='independent')
-
-    # Create a dummy layer only to restore the legend for supply lines
-    # Legend-only layer (no x/y, no width/height) — restores legend without affecting axes
-    legend_layer = (
-        alt.Chart(pd.DataFrame({"type": [LABEL_SMALL, LABEL_MED, LABEL_TOTAL]}))
-          .mark_point(opacity=0.001)  # nearly invisible; legend still renders
+        alt.Chart(supply_lines)
+          .mark_line(size=2)
           .encode(
+              x=alt.X("hour:O", title="Hour of day"),
+              y=alt.Y("y:Q", title="Trucks"),
               color=alt.Color(
-                  "type:N",
-                  title="",
-                  sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
+                  "type:N", title="",
+                  sort=[LABEL_SMALL, LABEL_MED, LABEL_LARGE],
                   scale=alt.Scale(
-                      domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-                      range=[greens[LABEL_SMALL], greens[LABEL_MED], greens[LABEL_TOTAL]]
+                      domain=[LABEL_SMALL, LABEL_MED, LABEL_LARGE],
+                      range=greens
                   )
-              )
+              ),
+              tooltip=[
+                  alt.Tooltip("hour:O", title="Hour"),
+                  alt.Tooltip("type:N", title="Type"),
+                  alt.Tooltip("component:Q", title="Capacity", format=",.0f")
+              ]
           )
     )
-
-
-
-
-    chart = (stacked + supply_chart + legend_layer).resolve_scale(
+    
+    chart = (stacked + supply_chart).resolve_scale(
         color='independent'
     ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
@@ -761,8 +701,7 @@ with col_right:
     
     st.altair_chart(chart, use_container_width=True)
 
-    
-    st.altair_chart(chart, use_container_width=True)
+
 
     # County profile
     st.markdown("### County profile")
@@ -822,6 +761,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

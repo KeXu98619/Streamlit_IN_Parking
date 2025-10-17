@@ -433,10 +433,10 @@ def add_truck_spots_layer(m, spots_gdf):
         s = str(pt_raw).strip().lower()
         m = re.search(r'(public|private).{0,10}?(small|medium|large)', s)
         if m:
-            return f"{m.group(1).title()} - {m.group(2).title()}"
+            return f"{m.group(1).title()}-{m.group(2).title()}"
         m = re.search(r'(small|medium|large).{0,10}?(public|private)', s)
         if m:
-            return f"{m.group(2).title()} - {m.group(1).title()}"
+            return f"{m.group(2).title()}-{m.group(1).title()}"
         return "Unknown"
 
     categories = [
@@ -777,6 +777,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

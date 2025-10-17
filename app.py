@@ -715,7 +715,7 @@ with col_right:
     ("Acc. designated demand (truck-hrs)", "acc_des_demand_fmt"),
     ("Acc. undesignated demand (truck-hrs)", "acc_undes_demand_fmt"),
     ("Acc. total demand (truck-hrs)", "acc_total_demand_fmt"),
-    ("Total Supply", "supply_fmt"),                      # renamed label
+    ("Total Supply (hourly fixed)", "supply_fmt"),                      # renamed label
     ("Supply (small lots)", "supply_small_fmt"),         # new
     ("Supply (medium lots)", "supply_medium_fmt"),       # new
     ("Supply (large lots)", "supply_large_fmt"),         # new
@@ -746,7 +746,7 @@ with st.expander("Metrics & diagnosis"):
 - **Acc. designated demand (truck-hours)** - sum of designated across 24 hours  
 - **Acc. undesignated demand (truck-hours)** - sum of undesignated across 24 hours  
 - **Acc. total demand (truck-hours)** - sum of (designated + undesignated) across 24 hours  
-- **Total Supply** - available designated stalls (capacity) 
+- **Total Supply (hourly fixed)** - available designated stalls (capacity) 
 - **Supply (small lots)** - available truck parking lots in small size
 - **Supply (medium lots)** - available truck parking lots in medium size
 - **Supply (large lots)** - available truck parking lots in large size
@@ -761,6 +761,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

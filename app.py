@@ -589,7 +589,7 @@ fips_to_name = dict(zip(gdf_joined["county_fips"], gdf_joined["county_name"]))
 
 with col_right:
     title = fips_to_name.get(st.session_state.selected_fips, f"County {st.session_state.selected_fips}")
-    st.markdown(f"### Hourly demand vs. supply distribution — **{title}**")
+    st.markdown(f"### Hourly Demand vs. Supply — **{title}**")
 
     def hourly_long(df_hourly, fips=None):
         if fips:
@@ -636,11 +636,10 @@ with col_right:
           .properties(height=320)
     )
 
-    # --- Stacked supply lines (cumulative y; component tooltips) ---
-    # Labels (legend + tooltip Type)
+   # --- Stacked supply lines (separate layers so Small is always on top) ---
     LABEL_SMALL = "Small lots"
     LABEL_MED   = "Medium lots"
-    LABEL_TOTAL = "Large Lots"  # cumulative all sizes
+    LABEL_TOTAL = "Large Lots"  # (you labeled this as cumulative; keep if you like)
     
     if not hourly_table.empty:
         s_small  = hourly_table["supply_small"].reset_index(drop=True)
@@ -653,18 +652,53 @@ with col_right:
     
         supply_lines = pd.DataFrame({
             "hour": list(hourly_table["hour"]) * 3,
-            "y":    pd.concat([cum_small, cum_medium, cum_total], ignore_index=True),  # plotted cumulative
-            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),   # tooltip component
+            "y":    pd.concat([cum_small, cum_medium, cum_total], ignore_index=True),
+            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),
             "type": ([LABEL_SMALL] * len(hourly_table)
                      + [LABEL_MED] * len(hourly_table)
                      + [LABEL_TOTAL] * len(hourly_table))
         })
-
-        # Ensure draw order: Total (bottom), Medium (middle), Small (top)
-        ORDER = {LABEL_TOTAL: 0, LABEL_MED: 1, LABEL_SMALL: 2}
-        supply_lines["order"] = supply_lines["type"].map(ORDER).astype(int)
     else:
         supply_lines = pd.DataFrame(columns=["hour","y","component","type"])
+    
+    greens = {
+        LABEL_SMALL: "#cbf7ce",   # light
+        LABEL_MED:   "#76c292",   # mid
+        LABEL_TOTAL: "#0C5E2D",   # dark
+    }
+    
+    # Split per series to control paint order (Total -> Medium -> Small)
+    sl_total = supply_lines[supply_lines["type"] == LABEL_TOTAL]
+    sl_med   = supply_lines[supply_lines["type"] == LABEL_MED]
+    sl_small = supply_lines[supply_lines["type"] == LABEL_SMALL]
+    
+    def line_layer(df, label):
+        return (
+            alt.Chart(df)
+              .mark_line(size=3.5, strokeCap='round', strokeJoin='round')
+              .encode(
+                  x=alt.X("hour:O"),
+                  y=alt.Y("y:Q"),
+                  color=alt.value(greens[label])
+              )
+        )
+    
+    def ghost_points_layer(df, label):
+        # Large invisible hit-area so it’s easy to hover even on overlaps
+        return (
+            alt.Chart(df)
+              .mark_point(size=260, opacity=0)
+              .encode(
+                  x=alt.X("hour:O"),
+                  y=alt.Y("y:Q"),
+                  tooltip=[
+                      alt.Tooltip("hour:O", title="Hour"),
+                      alt.Tooltip("type:N", title="Type"),
+                      alt.Tooltip("component:Q", title="Supply", format=",.0f"),
+                  ],
+                  color=alt.value(greens[label])  # ignored visually (opacity=0)
+              )
+        )
     
     # Demand bars (unchanged)
     stacked = (
@@ -687,42 +721,15 @@ with col_right:
           .properties(height=320)
     )
     
-    # Supply lines (greens, independent color scale)
-    greens = ["#cbf7ce", "#76c292", "#0C5E2D"]  # light → mid → dark
-    line_colors = alt.Scale(
-        domain=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL],
-        range=greens
-    )
-
-    supply_lines_chart = (
-    alt.Chart(supply_lines)
-      .mark_line(size=3.5, strokeCap='round', strokeJoin='round')
-      .encode(
-          x=alt.X("hour:O"),
-          y=alt.Y("y:Q"),
-          color=alt.Color("type:N", title="", sort=[LABEL_SMALL, LABEL_MED, LABEL_TOTAL], scale=line_colors),
-          order=alt.Order("order:Q")   # draw small last (on top)
-          )
-    )
+    # Paint order: TOTAL (bottom), then MEDIUM, then SMALL on top
+    supply_chart = (
+        line_layer(sl_total, LABEL_TOTAL) + ghost_points_layer(sl_total, LABEL_TOTAL) +
+        line_layer(sl_med,   LABEL_MED)   + ghost_points_layer(sl_med,   LABEL_MED)   +
+        line_layer(sl_small, LABEL_SMALL) + ghost_points_layer(sl_small, LABEL_SMALL)
+    ).resolve_scale(color='independent')
     
-    # Invisible "ghost" points to massively increase hover target for tooltips
-    ghost_points = (
-        alt.Chart(supply_lines)
-          .mark_point(size=220, opacity=0)   # big, invisible hit area
-          .encode(
-              x=alt.X("hour:O"),
-              y=alt.Y("y:Q"),
-              tooltip=[
-                  alt.Tooltip("hour:O", title="Hour"),
-                  alt.Tooltip("type:N", title="Type"),
-                  alt.Tooltip("component:Q", title="Supply", format=",.0f")
-              ],
-              color=alt.value("#000000")  # ignored visually due to opacity=0
-          )
-    )
-    
-    chart = (stacked + supply_lines_chart + ghost_points).resolve_scale(
-        color='independent'   # keep bar palette separate from supply lines
+    chart = (stacked + supply_chart).resolve_scale(
+        color='independent'
     ).properties(
         padding={"left": 4, "right": 4, "top": 4, "bottom": 36}
     ).configure_axis(
@@ -732,8 +739,6 @@ with col_right:
     )
     
     st.altair_chart(chart, use_container_width=True)
-
-
 
     # County profile
     st.markdown("### County profile")
@@ -793,6 +798,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 

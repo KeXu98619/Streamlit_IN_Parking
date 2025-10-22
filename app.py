@@ -638,34 +638,43 @@ with col_right:
           .properties(height=320)
     )
     
-    # --- Stacked supply lines (single layer so default legend shows) ---
+   # --- Stacked supply lines (Large at bottom → Medium → Small; legend stays Small/Medium/Large) ---
     LABEL_SMALL = "Small lots"
     LABEL_MED   = "Medium lots"
-    LABEL_LARGE = "Large lots"  # shown in legend; plotted as total (all sizes)
+    LABEL_LARGE = "Large lots"  # shown in legend
     
     if not hourly_table.empty:
         s_small  = hourly_table["supply_small"].reset_index(drop=True)
         s_medium = hourly_table["supply_medium"].reset_index(drop=True)
         s_large  = hourly_table["supply_large"].reset_index(drop=True)
     
-        # cumulative for plotting (so heights are small, small+medium, total)
-        cum_small  = s_small
-        cum_medium = s_small + s_medium
-        cum_total  = s_small + s_medium + s_large
+        # cumulative for plotting with Large at the bottom:
+        #   line 1 (Large):            large
+        #   line 2 (Medium cumulative): large + medium
+        #   line 3 (Small cumulative):  large + medium + small
+        cum_large    = s_large
+        cum_lg_med   = s_large + s_medium
+        cum_total    = s_large + s_medium + s_small
     
         supply_lines = pd.DataFrame({
             "hour": list(hourly_table["hour"]) * 3,
-            "y":    pd.concat([cum_small, cum_medium, cum_total], ignore_index=True),   # plotted cumulative
-            "component": pd.concat([s_small, s_medium, s_large], ignore_index=True),    # tooltip component
-            "type": ([LABEL_SMALL] * len(hourly_table)
-                     + [LABEL_MED]   * len(hourly_table)
-                     + [LABEL_LARGE] * len(hourly_table))
+            "y": pd.concat([cum_large, cum_lg_med, cum_total], ignore_index=True),    # plotted cumulative
+            "component": pd.concat([s_large, s_medium, s_small], ignore_index=True),  # tooltip (component only)
+            "type": (
+                [LABEL_LARGE] * len(hourly_table) +
+                [LABEL_MED]   * len(hourly_table) +
+                [LABEL_SMALL] * len(hourly_table)
+            )
         })
     else:
         supply_lines = pd.DataFrame(columns=["hour","y","component","type"])
     
-    # subtle green palette for supply
-    greens = ["#cbf7ce", "#76c292", "#0C5E2D"]  # small, medium, large(total)
+    # Reverse the greens: Small (dark) → Medium (mid) → Large (light)
+    greens_reversed = {
+        LABEL_SMALL: "#0C5E2D",  # dark
+        LABEL_MED:   "#76c292",  # mid
+        LABEL_LARGE: "#cbf7ce",  # light
+    }
     
     supply_chart = (
         alt.Chart(supply_lines)
@@ -674,11 +683,15 @@ with col_right:
               x=alt.X("hour:O", title="Hour of day"),
               y=alt.Y("y:Q", title="Trucks"),
               color=alt.Color(
-                  "type:N", title="",
+                  "type:N",
+                  title="",
+                  # Keep legend order Small → Medium → Large
                   sort=[LABEL_SMALL, LABEL_MED, LABEL_LARGE],
                   scale=alt.Scale(
                       domain=[LABEL_SMALL, LABEL_MED, LABEL_LARGE],
-                      range=greens
+                      range=[greens_reversed[LABEL_SMALL],
+                             greens_reversed[LABEL_MED],
+                             greens_reversed[LABEL_LARGE]]
                   )
               ),
               tooltip=[
@@ -688,7 +701,7 @@ with col_right:
               ]
           )
     )
-    
+
     chart = (stacked + supply_chart).resolve_scale(
         color='independent'
     ).properties(
@@ -761,6 +774,7 @@ with st.expander("Metrics & diagnosis"):
 - **Typical/Other** — All others (i.e., not High Stress, not Elevated, not No Supply).  
 - **No Supply** — Not High Stress, not Elevated, and supply = 0 parking spaces.  
 """)
+
 
 
 
